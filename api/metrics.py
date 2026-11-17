@@ -335,7 +335,13 @@ def health() -> dict[str, Any]:
         "llm": False,
         "gpu": False,
         "artifact_source": "cpu" if bundle.model is not None else "none",
-        "artifact_notes": [bundle.error] if bundle.error else ["lite bundle: classical + thresholds only"],
+        "artifact_notes": [bundle.error]
+        if bundle.error
+        else [
+            "lite bundle: classical + "
+            + ("calibrated stacker + " if bundle.stacker is not None else "")
+            + "thresholds only"
+        ],
         "data_source": "hc3",
         "default_mode": "lite",
         "disclaimer": DISCLAIMER,
@@ -536,28 +542,83 @@ def history() -> list[dict[str, Any]]:
 # metrics endpoint
 # --------------------------------------------------------------------------
 
-BODY = {
-    "artifact_source": "none",
-    "data_source": "unknown",
-    "metrics": None,
-    "manifest": {"deployment": "lite"},
-    "robustness": None,
-    "bias": None,
-    "cross_generator": None,
-    "baseline": None,
-    "plag_thresholds": None,
-    "plag_benchmark_results": None,
-    "corpus_stats": None,
-    "embedding_projection": None,
-    "plots": [],
-    "plots_base": "/api/metrics/plots",
-    "thresholds": None,
-    "manifest_notes": [
-        "This is the Lite deployment. Evaluation artifacts are served by the full analysis "
-        "server, which evaluates on held-out data; nothing is fabricated here."
-    ],
-    "deployment": "lite",
-}
+def _load() -> dict:
+    """Serve the real evaluation numbers when the bundle carries them.
+
+    The previous version hardcoded "Lite ships no evaluation artifacts", which was true
+    of the smoke run but is now false: a full training run produces ``metrics.json``, and
+    hiding it would make the page say "no data" about numbers that exist. If the file is
+    absent or unreadable the endpoint still degrades honestly.
+    """
+    directory = find_artifact_dir()
+    empty = {
+        "artifact_source": "none",
+        "data_source": "unknown",
+        "metrics": None,
+        "manifest": {"deployment": "lite"},
+        "robustness": None,
+        "bias": None,
+        "cross_generator": None,
+        "baseline": None,
+        "plag_thresholds": None,
+        "plag_benchmark_results": None,
+        "corpus_stats": None,
+        "embedding_projection": None,
+        "plots": [],
+        "plots_base": "/api/metrics/plots",
+        "thresholds": None,
+        "manifest_notes": [
+            "This is the Lite deployment and no evaluation artifacts are bundled with it. "
+            "The full analysis server evaluates on held-out data; nothing is fabricated here."
+        ],
+        "deployment": "lite",
+    }
+    if directory is None:
+        return empty
+    path = directory / "metrics.json"
+    if not path.exists():
+        return empty
+    try:
+        payload = json.loads(path.read_text())
+    except Exception:  # noqa: BLE001 - a corrupt file is reported, not raised
+        return empty
+
+    notes = list(payload.get("notes") or [])
+    notes.append(
+        "Lite deployment: these numbers come from the CPU baseline bundle shipped with "
+        "the functions. The full server adds perplexity, transformer and zero-shot "
+        "components, so its figures differ."
+    )
+    return {
+        "artifact_source": "cpu",
+        "data_source": payload.get("data_source", "hc3"),
+        "metrics": payload,
+        "manifest": {"deployment": "lite", "run": payload.get("run")},
+        "robustness": None,
+        "bias": None,
+        "cross_generator": None,
+        "baseline": None,
+        "plag_thresholds": None,
+        "plag_benchmark_results": None,
+        "corpus_stats": None,
+        "embedding_projection": None,
+        "plots": payload.get("plots") or [],
+        "plots_base": "/api/metrics/plots",
+        "thresholds": _thresholds(directory),
+        "manifest_notes": notes,
+        "deployment": "lite",
+    }
+
+
+def _thresholds(directory) -> dict | None:
+    try:
+        data = json.loads((directory / "thresholds.json").read_text())
+        return data.get("lite") or None
+    except Exception:  # noqa: BLE001
+        return None
+
+
+BODY = _load()
 
 
 class handler(BaseHTTPRequestHandler):  # noqa: N801 - Vercel's expected class name

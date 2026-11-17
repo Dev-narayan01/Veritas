@@ -137,12 +137,31 @@ def test_analyze_function_scores_pasted_text() -> None:
     assert payload["documents"][0]["ai"]["components_run"] == ["classical"]
 
 
-def test_metrics_function_says_it_has_none() -> None:
+def test_metrics_function_never_invents_numbers() -> None:
+    """Either the real evaluation bundle is served, or the page says it is empty.
+
+    Both are honest; a placeholder number would not be. The frontend reads
+    ``metrics.splits[split].modes[mode]`` with ``roc_auc``/``tpr_at_1pct_fpr``/``ece``
+    keys, so when data exists those keys must be present.
+    """
     status, payload = _run_handler("metrics", "GET")
     assert status == 200
-    assert payload["metrics"] is None
     assert payload["deployment"] == "lite"
-    assert payload["manifest_notes"], "the page needs a sentence explaining why it is empty"
+    assert payload["manifest_notes"], "the page always needs a sentence explaining the numbers"
+
+    if payload["metrics"] is None:
+        assert payload["artifact_source"] == "none"
+        return
+
+    assert payload["artifact_source"] == "cpu"
+    splits = payload["metrics"]["splits"]
+    assert "test" in splits and "test_ood" in splits
+    for split in ("test", "test_ood"):
+        for mode in ("lite", "fast"):
+            entry = splits[split]["modes"][mode]
+            for key in ("roc_auc", "tpr_at_1pct_fpr", "ece"):
+                assert isinstance(entry[key], (int, float)), f"{split}/{mode} missing {key}"
+    assert payload["thresholds"]["t_human"] < payload["thresholds"]["t_ai"]
 
 
 def test_samples_function_returns_original_text() -> None:

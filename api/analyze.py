@@ -335,7 +335,13 @@ def health() -> dict[str, Any]:
         "llm": False,
         "gpu": False,
         "artifact_source": "cpu" if bundle.model is not None else "none",
-        "artifact_notes": [bundle.error] if bundle.error else ["lite bundle: classical + thresholds only"],
+        "artifact_notes": [bundle.error]
+        if bundle.error
+        else [
+            "lite bundle: classical + "
+            + ("calibrated stacker + " if bundle.stacker is not None else "")
+            + "thresholds only"
+        ],
         "data_source": "hc3",
         "default_mode": "lite",
         "disclaimer": DISCLAIMER,
