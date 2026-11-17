@@ -35,6 +35,10 @@ else
   echo "no artifacts to stage; the site will deploy in 'no artifacts loaded' state" >&2
 fi
 
+# Vercel ships each Python function as a single file, so the shared Lite core has to be
+# copied next to the functions as api/_core.py; see scripts/sync_api_core.py.
+python3 ../scripts/sync_api_core.py
+
 npm ci
 npm run build
 

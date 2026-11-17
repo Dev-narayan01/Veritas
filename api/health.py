@@ -16,7 +16,7 @@ def _build() -> dict:
     that names the failure, and the UI shows the server's own reason.
     """
     try:
-        from _lib.core import health
+        from _core import health
     except Exception:  # noqa: BLE001 - any import failure is a runtime state to report
         return {
             "status": "degraded",

@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import json
 import math
+import os
 import re
 import sys
 import types
@@ -106,13 +107,29 @@ def _install_pickle_stub() -> None:
     sys.modules.setdefault("app.detector.classical", classical_module)
 
 
+def _search_roots() -> list[Path]:
+    """Directories to try, most specific first.
+
+    The core ships twice: as ``api/_lib/core.py`` (imported by tests and local tooling)
+    and as the generated ``api/_core.py`` (bundled into the Vercel functions, two levels
+    shallower). Deriving the root from ``__file__`` therefore has to cover both layouts,
+    plus ``VERITAS_ARTIFACT_DIR`` for a bundle placed somewhere else entirely.
+    """
+    here = Path(__file__).resolve()
+    roots = [here.parent, here.parent.parent, here.parent.parent.parent]
+    override = os.environ.get("VERITAS_ARTIFACT_DIR")
+    if override:
+        roots.insert(0, Path(override))
+    return roots
+
+
 def find_artifact_dir() -> Path | None:
     """Locate a bundle containing the Lite files, preferring the small published one."""
-    root = Path(__file__).resolve().parents[2]
-    for relative in ARTIFACT_CANDIDATES:
-        candidate = root / relative
-        if (candidate / "classical.pkl").exists() and (candidate / "thresholds.json").exists():
-            return candidate
+    for root in _search_roots():
+        for relative in ARTIFACT_CANDIDATES:
+            candidate = root / relative
+            if (candidate / "classical.pkl").exists() and (candidate / "thresholds.json").exists():
+                return candidate
     return None
 
 
@@ -120,7 +137,8 @@ def load_lite_artifacts() -> LiteArtifacts:
     """Load the classical detector and thresholds; never raise."""
     directory = find_artifact_dir()
     if directory is None:
-        return LiteArtifacts(None, error="no lite artifact bundle is deployed with this build")
+        searched = ", ".join(str(root / rel) for root in _search_roots() for rel in ARTIFACT_CANDIDATES)
+        return LiteArtifacts(None, error=f"no lite artifact bundle is deployed with this build (searched: {searched})")
     try:
         import joblib
 

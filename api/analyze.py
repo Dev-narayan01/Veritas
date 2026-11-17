@@ -10,7 +10,7 @@ from __future__ import annotations
 import json
 from http.server import BaseHTTPRequestHandler
 
-from _lib.core import LITE_LIMITATIONS, score
+from _core import LITE_LIMITATIONS, score
 
 MAX_BODY_BYTES = 200_000
 
