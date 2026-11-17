@@ -33,8 +33,10 @@ LITE_LIMITATIONS = [
 LITE_COMPONENTS = ("classical",)
 MIN_WORDS = 60
 ARTIFACT_CANDIDATES = (
-    "frontend/public/artifacts",
-    "ml/artifacts",
+    "api/artifacts",  # committed Lite bundle: the only one a git deploy can ship
+    "artifacts",  # resolve relative to this file's own directory (api/artifacts)
+    "frontend/public/artifacts",  # staged by scripts/deploy_vercel.sh
+    "ml/artifacts",  # a local training run
 )
 
 

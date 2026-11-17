@@ -1,0 +1,95 @@
+{
+  "product": "Veritas",
+  "code_version": {
+    "commit": "4e91c3ce060dca8835a33770da2d9a46152f5391",
+    "dirty": "yes"
+  },
+  "data_source": "hc3",
+  "split_sha256": "d39f76421d5fd86bea1b259186c26182e79cb86b9b417899d4f4723e72452e06",
+  "components_trained": [
+    "classical",
+    "ppl_gpt2"
+  ],
+  "modes_fitted": [
+    "lite",
+    "fast"
+  ],
+  "created_at": "2026-11-17T15:26:21Z",
+  "run": "smoke",
+  "source": "cpu",
+  "smoke": true,
+  "ppl_backend": "ngram_lm",
+  "steps": {
+    "prepare_data": {
+      "label": "data + group-disjoint splits",
+      "status": "ok"
+    },
+    "train_classical": {
+      "label": "classical TF-IDF detector",
+      "status": "ok"
+    },
+    "train_perplexity_model": {
+      "label": "token statistics detector",
+      "status": "ok"
+    },
+    "train_transformer": {
+      "label": "fine-tuned transformer",
+      "status": "ok"
+    },
+    "compute_zeroshot_features": {
+      "label": "zero-shot features",
+      "status": "ok"
+    },
+    "train_stackers": {
+      "label": "mode stackers",
+      "status": "ok"
+    },
+    "tune_thresholds": {
+      "label": "Platt calibration + thresholds",
+      "status": "ok"
+    },
+    "evaluate": {
+      "label": "evaluation + ablation",
+      "status": "ok"
+    },
+    "eval_cross_generator": {
+      "label": "leave-one-generator-out",
+      "status": "ok"
+    },
+    "eval_baseline_detector": {
+      "label": "third-party baseline",
+      "status": "ok"
+    },
+    "robustness": {
+      "label": "perturbation robustness",
+      "status": "ok"
+    },
+    "bias_check": {
+      "label": "ESL-proxy bias check",
+      "status": "ok"
+    },
+    "embedding_projection": {
+      "label": "3D projection",
+      "status": "ok"
+    },
+    "build_corpus": {
+      "label": "plagiarism corpus index",
+      "status": "ok"
+    },
+    "make_plag_benchmark": {
+      "label": "synthetic benchmark",
+      "status": "ok"
+    },
+    "tune_plag_thresholds": {
+      "label": "plagiarism thresholds",
+      "status": "ok"
+    },
+    "eval_plagiarism": {
+      "label": "plagiarism evaluation",
+      "status": "ok"
+    }
+  },
+  "notes": [
+    "Smoke run: numbers are a pipeline check, not results."
+  ]
+}

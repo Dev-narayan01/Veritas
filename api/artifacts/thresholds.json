@@ -1,0 +1,28 @@
+{
+  "lite": {
+    "t_ai": 0.9551733496934256,
+    "t_human": 0.2504622511010209,
+    "target_fpr": 0.01,
+    "band_collapsed": false,
+    "per_bucket": {},
+    "achieved": {
+      "human_fpr_at_t_ai": 0.004,
+      "ai_miss_at_t_human": 0.052,
+      "abstention_rate": 0.146
+    },
+    "unique_scores": 480
+  },
+  "fast": {
+    "t_ai": 0.9716194906032427,
+    "t_human": 0.45360274422280744,
+    "target_fpr": 0.01,
+    "band_collapsed": false,
+    "per_bucket": {},
+    "achieved": {
+      "human_fpr_at_t_ai": 0.004,
+      "ai_miss_at_t_human": 0.052,
+      "abstention_rate": 0.122
+    },
+    "unique_scores": 480
+  }
+}

@@ -1,0 +1,557 @@
+{
+  "run": "smoke",
+  "data_source": "hc3",
+  "splits": {
+    "test_ood": {
+      "label": "held-out (out-of-domain)",
+      "components": {
+        "classical": {
+          "n": 500,
+          "accuracy": 0.658,
+          "precision": 0.5985,
+          "recall": 0.96,
+          "f1": 0.7373,
+          "roc_auc": 0.8871,
+          "roc_auc_ci": [
+            0.8559,
+            0.9162
+          ],
+          "pr_auc": 0.9038,
+          "tpr_at_1pct_fpr": 0.448,
+          "tpr_at_1pct_fpr_ci": [
+            0.0851,
+            0.5942
+          ],
+          "tpr_at_0.1pct_fpr": 0.092
+        },
+        "ppl_gpt2": {
+          "n": 500,
+          "accuracy": 0.504,
+          "precision": 0.502,
+          "recall": 1.0,
+          "f1": 0.6684,
+          "roc_auc": 0.7641,
+          "roc_auc_ci": [
+            0.7206,
+            0.8076
+          ],
+          "pr_auc": 0.7129,
+          "tpr_at_1pct_fpr": 0.0,
+          "tpr_at_1pct_fpr_ci": [
+            0.0,
+            0.0128
+          ],
+          "tpr_at_0.1pct_fpr": 0.0
+        }
+      },
+      "modes": {
+        "lite": {
+          "n": 500,
+          "accuracy": 0.654,
+          "precision": 0.5951,
+          "recall": 0.964,
+          "f1": 0.7359,
+          "roc_auc": 0.8889,
+          "roc_auc_ci": [
+            0.8572,
+            0.9181
+          ],
+          "pr_auc": 0.9015,
+          "tpr_at_1pct_fpr": 0.432,
+          "tpr_at_1pct_fpr_ci": [
+            0.0669,
+            0.5543
+          ],
+          "tpr_at_0.1pct_fpr": 0.072,
+          "human_fpr_at_t_ai": 0.204,
+          "ai_miss_at_t_human": 0.012,
+          "abstention_rate": 0.38,
+          "t_human": 0.2505,
+          "t_ai": 0.9552,
+          "band_collapsed": false,
+          "ece": 0.2925,
+          "latency_ms_per_1k_texts": 78.52,
+          "components": [
+            "classical"
+          ],
+          "breakdown": {
+            "domain": {
+              "formal_academic": {
+                "n": 67
+              },
+              "wiki_csai": {
+                "n": 433,
+                "roc_auc": 0.863
+              }
+            },
+            "generator": {
+              "chatgpt": {
+                "n": 250
+              },
+              "human": {
+                "n": 250
+              }
+            },
+            "length_bucket": {
+              "100-250": {
+                "n": 339,
+                "roc_auc": 0.8783
+              },
+              "250-500": {
+                "n": 57,
+                "roc_auc": 0.8735
+              },
+              "500+": {
+                "n": 5
+              },
+              "<100": {
+                "n": 99,
+                "roc_auc": 0.6661
+              }
+            }
+          },
+          "confusion": {
+            "ai_true_positive": 205,
+            "ai_false_negative": 45,
+            "human_false_positive": 51,
+            "human_true_negative": 199,
+            "ai_abstained": 42,
+            "human_abstained": 148
+          },
+          "accuracy_by_length": {
+            "<100": {
+              "n": 99,
+              "accuracy": 0.9293,
+              "abstained": 51
+            },
+            "100-250": {
+              "n": 339,
+              "accuracy": 0.8083,
+              "abstained": 117
+            },
+            "250-500": {
+              "n": 57,
+              "accuracy": 0.614,
+              "abstained": 20
+            },
+            "500+": {
+              "n": 5,
+              "accuracy": 0.6,
+              "abstained": 2
+            }
+          }
+        },
+        "fast": {
+          "n": 500,
+          "accuracy": 0.638,
+          "precision": 0.5819,
+          "recall": 0.98,
+          "f1": 0.7303,
+          "roc_auc": 0.9022,
+          "roc_auc_ci": [
+            0.8748,
+            0.9284
+          ],
+          "pr_auc": 0.9176,
+          "tpr_at_1pct_fpr": 0.448,
+          "tpr_at_1pct_fpr_ci": [
+            0.2621,
+            0.6274
+          ],
+          "tpr_at_0.1pct_fpr": 0.272,
+          "human_fpr_at_t_ai": 0.156,
+          "ai_miss_at_t_human": 0.012,
+          "abstention_rate": 0.378,
+          "t_human": 0.4536,
+          "t_ai": 0.9716,
+          "band_collapsed": false,
+          "ece": 0.3193,
+          "latency_ms_per_1k_texts": 79.03,
+          "components": [
+            "classical",
+            "ppl_gpt2"
+          ],
+          "breakdown": {
+            "domain": {
+              "formal_academic": {
+                "n": 67
+              },
+              "wiki_csai": {
+                "n": 433,
+                "roc_auc": 0.8795
+              }
+            },
+            "generator": {
+              "chatgpt": {
+                "n": 250
+              },
+              "human": {
+                "n": 250
+              }
+            },
+            "length_bucket": {
+              "100-250": {
+                "n": 339,
+                "roc_auc": 0.8763
+              },
+              "250-500": {
+                "n": 57,
+                "roc_auc": 0.8902
+              },
+              "500+": {
+                "n": 5
+              },
+              "<100": {
+                "n": 99,
+                "roc_auc": 0.778
+              }
+            }
+          },
+          "confusion": {
+            "ai_true_positive": 202,
+            "ai_false_negative": 48,
+            "human_false_positive": 39,
+            "human_true_negative": 211,
+            "ai_abstained": 45,
+            "human_abstained": 144
+          },
+          "accuracy_by_length": {
+            "<100": {
+              "n": 99,
+              "accuracy": 0.9091,
+              "abstained": 46
+            },
+            "100-250": {
+              "n": 339,
+              "accuracy": 0.8201,
+              "abstained": 121
+            },
+            "250-500": {
+              "n": 57,
+              "accuracy": 0.7193,
+              "abstained": 21
+            },
+            "500+": {
+              "n": 5,
+              "accuracy": 0.8,
+              "abstained": 1
+            }
+          }
+        }
+      }
+    },
+    "test": {
+      "label": "in-domain (optimistic)",
+      "components": {
+        "classical": {
+          "n": 500,
+          "accuracy": 0.916,
+          "precision": 0.9407,
+          "recall": 0.888,
+          "f1": 0.9136,
+          "roc_auc": 0.9752,
+          "roc_auc_ci": [
+            0.9613,
+            0.986
+          ],
+          "pr_auc": 0.9782,
+          "tpr_at_1pct_fpr": 0.772,
+          "tpr_at_1pct_fpr_ci": [
+            0.5116,
+            0.8489
+          ],
+          "tpr_at_0.1pct_fpr": 0.524
+        },
+        "ppl_gpt2": {
+          "n": 500,
+          "accuracy": 0.564,
+          "precision": 0.5345,
+          "recall": 0.992,
+          "f1": 0.6947,
+          "roc_auc": 0.9206,
+          "roc_auc_ci": [
+            0.8943,
+            0.942
+          ],
+          "pr_auc": 0.9348,
+          "tpr_at_1pct_fpr": 0.584,
+          "tpr_at_1pct_fpr_ci": [
+            0.4751,
+            0.6557
+          ],
+          "tpr_at_0.1pct_fpr": 0.488
+        }
+      },
+      "modes": {
+        "lite": {
+          "n": 500,
+          "accuracy": 0.92,
+          "precision": 0.9339,
+          "recall": 0.904,
+          "f1": 0.9187,
+          "roc_auc": 0.9768,
+          "roc_auc_ci": [
+            0.9628,
+            0.9873
+          ],
+          "pr_auc": 0.9796,
+          "tpr_at_1pct_fpr": 0.764,
+          "tpr_at_1pct_fpr_ci": [
+            0.5182,
+            0.8532
+          ],
+          "tpr_at_0.1pct_fpr": 0.532,
+          "human_fpr_at_t_ai": 0.004,
+          "ai_miss_at_t_human": 0.044,
+          "abstention_rate": 0.188,
+          "t_human": 0.2505,
+          "t_ai": 0.9552,
+          "band_collapsed": false,
+          "ece": 0.0159,
+          "latency_ms_per_1k_texts": 76.82,
+          "components": [
+            "classical"
+          ],
+          "breakdown": {
+            "domain": {
+              "finance": {
+                "n": 107,
+                "roc_auc": 0.994
+              },
+              "medicine": {
+                "n": 124,
+                "roc_auc": 0.9823
+              },
+              "open_qa": {
+                "n": 127,
+                "roc_auc": 0.9226
+              },
+              "reddit_eli5": {
+                "n": 142,
+                "roc_auc": 0.9832
+              }
+            },
+            "generator": {
+              "chatgpt": {
+                "n": 250
+              },
+              "human": {
+                "n": 250
+              }
+            },
+            "length_bucket": {
+              "100-250": {
+                "n": 246,
+                "roc_auc": 0.9786
+              },
+              "250-500": {
+                "n": 51,
+                "roc_auc": 0.9887
+              },
+              "500+": {
+                "n": 7
+              },
+              "<100": {
+                "n": 196,
+                "roc_auc": 0.9331
+              }
+            }
+          },
+          "confusion": {
+            "ai_true_positive": 179,
+            "ai_false_negative": 71,
+            "human_false_positive": 1,
+            "human_true_negative": 249,
+            "ai_abstained": 60,
+            "human_abstained": 34
+          },
+          "accuracy_by_length": {
+            "<100": {
+              "n": 196,
+              "accuracy": 0.8622,
+              "abstained": 37
+            },
+            "100-250": {
+              "n": 246,
+              "accuracy": 0.8293,
+              "abstained": 48
+            },
+            "250-500": {
+              "n": 51,
+              "accuracy": 0.9412,
+              "abstained": 8
+            },
+            "500+": {
+              "n": 7,
+              "accuracy": 1.0,
+              "abstained": 1
+            }
+          }
+        },
+        "fast": {
+          "n": 500,
+          "accuracy": 0.93,
+          "precision": 0.9498,
+          "recall": 0.908,
+          "f1": 0.9284,
+          "roc_auc": 0.9764,
+          "roc_auc_ci": [
+            0.9613,
+            0.9871
+          ],
+          "pr_auc": 0.981,
+          "tpr_at_1pct_fpr": 0.768,
+          "tpr_at_1pct_fpr_ci": [
+            0.6583,
+            0.9069
+          ],
+          "tpr_at_0.1pct_fpr": 0.672,
+          "human_fpr_at_t_ai": 0.004,
+          "ai_miss_at_t_human": 0.084,
+          "abstention_rate": 0.136,
+          "t_human": 0.4536,
+          "t_ai": 0.9716,
+          "band_collapsed": false,
+          "ece": 0.0332,
+          "latency_ms_per_1k_texts": 79.54,
+          "components": [
+            "classical",
+            "ppl_gpt2"
+          ],
+          "breakdown": {
+            "domain": {
+              "finance": {
+                "n": 107,
+                "roc_auc": 0.9979
+              },
+              "medicine": {
+                "n": 124,
+                "roc_auc": 0.9847
+              },
+              "open_qa": {
+                "n": 127,
+                "roc_auc": 0.9191
+              },
+              "reddit_eli5": {
+                "n": 142,
+                "roc_auc": 0.9864
+              }
+            },
+            "generator": {
+              "chatgpt": {
+                "n": 250
+              },
+              "human": {
+                "n": 250
+              }
+            },
+            "length_bucket": {
+              "100-250": {
+                "n": 246,
+                "roc_auc": 0.986
+              },
+              "250-500": {
+                "n": 51,
+                "roc_auc": 0.9903
+              },
+              "500+": {
+                "n": 7
+              },
+              "<100": {
+                "n": 196,
+                "roc_auc": 0.9137
+              }
+            }
+          },
+          "confusion": {
+            "ai_true_positive": 175,
+            "ai_false_negative": 75,
+            "human_false_positive": 1,
+            "human_true_negative": 249,
+            "ai_abstained": 54,
+            "human_abstained": 14
+          },
+          "accuracy_by_length": {
+            "<100": {
+              "n": 196,
+              "accuracy": 0.8571,
+              "abstained": 21
+            },
+            "100-250": {
+              "n": 246,
+              "accuracy": 0.8211,
+              "abstained": 41
+            },
+            "250-500": {
+              "n": 51,
+              "accuracy": 0.9216,
+              "abstained": 6
+            },
+            "500+": {
+              "n": 7,
+              "accuracy": 1.0,
+              "abstained": 0
+            }
+          }
+        }
+      }
+    }
+  },
+  "ablation": {
+    "test_ood": {
+      "lite": {
+        "components": [
+          "classical"
+        ],
+        "roc_auc": 0.8889,
+        "tpr_at_1pct_fpr": 0.432,
+        "f1": 0.7359
+      },
+      "fast": {
+        "components": [
+          "classical",
+          "ppl_gpt2"
+        ],
+        "roc_auc": 0.9022,
+        "tpr_at_1pct_fpr": 0.448,
+        "f1": 0.7303
+      }
+    },
+    "test": {
+      "lite": {
+        "components": [
+          "classical"
+        ],
+        "roc_auc": 0.9768,
+        "tpr_at_1pct_fpr": 0.764,
+        "f1": 0.9187
+      },
+      "fast": {
+        "components": [
+          "classical",
+          "ppl_gpt2"
+        ],
+        "roc_auc": 0.9764,
+        "tpr_at_1pct_fpr": 0.768,
+        "f1": 0.9284
+      }
+    }
+  },
+  "plots": [
+    "roc_test_ood.png",
+    "pr_test_ood.png",
+    "calibration_test_ood.png",
+    "distributions_test_ood.png",
+    "confusion_test_ood.png",
+    "accuracy_by_length_test_ood.png",
+    "roc_test.png",
+    "pr_test.png",
+    "calibration_test.png",
+    "distributions_test.png",
+    "confusion_test.png",
+    "accuracy_by_length_test.png"
+  ],
+  "notes": [
+    "SMOKE RUN: this is a correctness check on a tiny sample and must never be presented as a result."
+  ]
+}

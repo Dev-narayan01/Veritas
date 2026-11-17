@@ -189,3 +189,28 @@ def test_functions_are_self_contained() -> None:
         for forbidden in ("from _lib", "from _core", "import _core", "from app"):
             assert forbidden not in source, f"api/{name}.py must be self-contained"
         assert "class handler(BaseHTTPRequestHandler)" in source
+
+
+def test_the_committed_lite_bundle_is_present_and_loadable() -> None:
+    """A git deploy ships only tracked files.
+
+    Vercel packages functions before any build step runs, so ``frontend/public/artifacts``
+    (git-ignored, staged by the deploy script) is absent from a git-based deploy. That is
+    why the same endpoints answered "no lite artifact bundle is deployed with this build"
+    in production while working locally. ``api/artifacts`` is the committed copy.
+    """
+    bundle = API / "artifacts"
+    for name in ("classical.pkl", "thresholds.json"):
+        assert (bundle / name).is_file(), f"missing api/artifacts/{name}"
+    assert (bundle / "classical.pkl").stat().st_size < 2_000_000, "keep the Lite bundle small"
+
+    # The function finds it the way it runs in production: from api/<name>.py.
+    spec = importlib.util.spec_from_file_location("vercel_health_bundle", API / "health.py")
+    module = importlib.util.module_from_spec(spec)  # type: ignore[arg-type]
+    assert spec and spec.loader
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    payload = module.BODY
+    assert payload["artifact_source"] == "cpu", payload["artifact_notes"]
+    assert payload["models_loaded"]["classical"] is True
+    assert payload["status"] == "ok"
