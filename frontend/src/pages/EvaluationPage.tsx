@@ -282,7 +282,7 @@ export function EvaluationPage() {
  * than being folded into "correct". */
 function ConfusionAndLength({ data }: { data: MetricsResponse }) {
   const splits = (((data.metrics ?? {}) as Record<string, any>).splits ?? {}) as Record<string, any>
-  const rows: Array<{ split: string; mode: string; confusion: Record<string, number>; byLength: Record<string, { n: number; accuracy: number }> }> = []
+  const rows: Array<{ split: string; mode: string; confusion: Record<string, number>; byLength: Record<string, { n: number; accuracy: number; abstained?: number }> }> = []
   for (const [splitName, split] of Object.entries(splits)) {
     for (const [mode, entry] of Object.entries((split?.modes ?? {}) as Record<string, any>)) {
       if (entry?.confusion) {
