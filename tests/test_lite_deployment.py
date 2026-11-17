@@ -202,7 +202,10 @@ def test_the_committed_lite_bundle_is_present_and_loadable() -> None:
     bundle = API / "artifacts"
     for name in ("classical.pkl", "thresholds.json"):
         assert (bundle / name).is_file(), f"missing api/artifacts/{name}"
-    assert (bundle / "classical.pkl").stat().st_size < 2_000_000, "keep the Lite bundle small"
+    # 5 MB char-ngram model vs Vercel's 500 MB unzipped bundle limit: plenty of headroom,
+    # but a runaway artifact (e.g. accidentally committing the 26 MB ppl model, which Lite
+    # never loads) should still fail here rather than at deploy time.
+    assert (bundle / "classical.pkl").stat().st_size < 20_000_000, "keep the Lite bundle small"
 
     # The function finds it the way it runs in production: from api/<name>.py.
     spec = importlib.util.spec_from_file_location("vercel_health_bundle", API / "health.py")
@@ -214,6 +217,26 @@ def test_the_committed_lite_bundle_is_present_and_loadable() -> None:
     assert payload["artifact_source"] == "cpu", payload["artifact_notes"]
     assert payload["models_loaded"]["classical"] is True
     assert payload["status"] == "ok"
+    # The fitted stacker carries the Platt calibration and its own thresholds; without it
+    # the runtime falls back to raw component scores, which are not calibrated.
+    assert (bundle / "stacker_lite.pkl").is_file(), "ship the fitted lite stacker"
+    assert module.BODY["artifact_notes"], "health must describe the bundle it loaded"
+
+
+def test_lite_uses_the_calibrated_stacker_when_present() -> None:
+    """A stacked probability must be reported as such, not silently swapped for raw."""
+    sys.path.insert(0, str(API))
+    from _lib import core
+
+    bundle = core.artifacts()
+    if bundle.stacker is None:
+        pytest.skip("committed bundle has no stacker; it reports raw component scores")
+    text = (ROOT / "ml" / "bundled" / "samples" / "sample_ai.txt").read_text()
+    ai = core.score(text)["documents"][0]["ai"]
+    raw = ai["components"][0]["raw"]
+    assert raw["stacked"] is True
+    assert raw["component_probability"] != ai["probability"]
+    assert ai["thresholds"]["t_ai"] == pytest.approx(bundle.stacker.thresholds.t_ai, abs=1e-6)
 
 
 def test_no_dependency_file_shadows_requirements_txt() -> None:

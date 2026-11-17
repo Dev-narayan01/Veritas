@@ -59,12 +59,88 @@ class _Classical:
 
 
 @dataclass
+class _PlattScaler:
+    """Duck-typed ``app.detector.calibration.PlattScaler`` (two floats)."""
+
+    a: float = 1.0
+    b: float = 0.0
+
+    def transform(self, decision: Any) -> Any:
+        import numpy as np
+
+        z = self.a * np.asarray(decision, dtype=float) + self.b
+        return 1.0 / (1.0 + np.exp(-np.clip(z, -60, 60)))
+
+
+@dataclass
+class _ModeThresholds:
+    """Duck-typed ``app.detector.calibration.ModeThresholds``.
+
+    Only the fields the runtime reads are declared; anything else the pickle carries is
+    ignored, which keeps this stable across artifact versions.
+    """
+
+    t_ai: float = 1.0
+    t_human: float = 0.0
+    target_fpr: float = 0.01
+    band_collapsed: bool = False
+    per_bucket: dict[str, dict[str, float]] | None = None
+    achieved: dict[str, float] | None = None
+
+
+class _Stacker:
+    """Duck-typed stand-in for ``app.detector.stacker.StackerArtifact``.
+
+    Pickle restores ``mode``, ``feature_names``, ``classifier``, ``scaler_mean``,
+    ``scaler_std``, ``platt`` and ``thresholds`` onto this class, so the exact fitted
+    logistic regression and Platt scaler trained by ``ml/train_stackers.py`` run here.
+    Nothing about the calibration is reimplemented or approximated.
+    """
+
+    def __init__(self) -> None:
+        self.mode = "lite"
+        self.feature_names: list[str] = []
+        self.classifier: Any = None
+        self.scaler_mean: dict[str, float] = {}
+        self.scaler_std: dict[str, float] = {}
+        self.platt: Any = None
+        self.thresholds: Any = None
+        self.components: list[str] = []
+
+    def vector(self, features: dict[str, float]) -> list[float]:
+        out = []
+        for name in self.feature_names:
+            value = float(features.get(name, 0.0))
+            if name in self.scaler_mean:
+                std = self.scaler_std.get(name) or 1.0
+                value = (value - self.scaler_mean[name]) / std
+            out.append(value)
+        return out
+
+    def probability(self, features: dict[str, float]) -> float:
+        import numpy as np
+
+        vec = np.asarray([self.vector(features)], dtype=float)
+        if self.platt is None:
+            return float(self.classifier.predict_proba(vec)[0, 1])
+        decision = float(self.classifier.decision_function(vec)[0])
+        return float(self.platt.transform(np.asarray([decision]))[0])
+
+
+def _logit(probability: float) -> float:
+    """Match ``app.detector.stacker.logit`` exactly, including its clamp."""
+    p = min(1.0 - 1e-6, max(1e-6, float(probability)))
+    return math.log(p / (1.0 - p))
+
+
+@dataclass
 class LiteArtifacts:
-    """The two files the Lite detector needs, resolved once per cold start."""
+    """Lite files, resolved once per cold start."""
 
     directory: Path | None
     model: Any = None
     thresholds: dict[str, Any] | None = None
+    stacker: Any = None
     error: str | None = None
 
     @property
@@ -89,12 +165,20 @@ def _install_pickle_stub() -> None:
     except Exception:  # noqa: BLE001 - expected on Vercel; any failure means "not bundled"
         pass
 
+    calibration_module = types.ModuleType("app.detector.calibration")
+    calibration_module.PlattScaler = _PlattScaler  # type: ignore[attr-defined]
+    calibration_module.ModeThresholds = _ModeThresholds  # type: ignore[attr-defined]
+    stacker_module = types.ModuleType("app.detector.stacker")
+    stacker_module.StackerArtifact = _Stacker  # type: ignore[attr-defined]
+
     app_module = types.ModuleType("app")
     app_module.__path__ = []  # type: ignore[attr-defined]
     detector_module = types.ModuleType("app.detector")
     detector_module.__path__ = []  # type: ignore[attr-defined]
     classical_module = types.ModuleType("app.detector.classical")
     classical_module.ClassicalModel = _Classical  # type: ignore[attr-defined]
+    sys.modules.setdefault("app.detector.calibration", calibration_module)
+    sys.modules.setdefault("app.detector.stacker", stacker_module)
     app_module.detector = detector_module  # type: ignore[attr-defined]
     detector_module.classical = classical_module  # type: ignore[attr-defined]
     sys.modules.setdefault("app", app_module)
@@ -119,7 +203,18 @@ def _search_roots() -> list[Path]:
 
 
 def find_artifact_dir() -> Path | None:
-    """Locate a bundle containing the Lite files, preferring the small published one."""
+    """Locate a bundle containing the Lite files.
+
+    ``VERITAS_ARTIFACT_DIR`` is an exact directory and wins outright: pointing it at a
+    fresh training run must not be silently overridden by the committed bundle, which is
+    what happens if it is merely prepended to a search list.
+    """
+    override = os.environ.get("VERITAS_ARTIFACT_DIR")
+    if override:
+        candidate = Path(override)
+        if (candidate / "classical.pkl").exists() and (candidate / "thresholds.json").exists():
+            return candidate
+        return None
     for root in _search_roots():
         for relative in ARTIFACT_CANDIDATES:
             candidate = root / relative
@@ -145,9 +240,15 @@ def load_lite_artifacts() -> LiteArtifacts:
         if vectorizer is None or classifier is None:
             return LiteArtifacts(directory, error="classical.pkl does not contain a vectorizer/classifier pair")
         model = _Classical(vectorizer, classifier)
+        stacker = None
+        stacker_path = directory / "stacker_lite.pkl"
+        if stacker_path.exists():
+            candidate = joblib.load(stacker_path)
+            if getattr(candidate, "classifier", None) is not None:
+                stacker = candidate
     except Exception as exc:  # noqa: BLE001 - a corrupt/missing bundle is a runtime state
         return LiteArtifacts(directory, error=f"lite artifacts failed to load: {exc}")
-    return LiteArtifacts(directory, model=model, thresholds=thresholds)
+    return LiteArtifacts(directory, model=model, thresholds=thresholds, stacker=stacker)
 
 
 _ARTIFACTS: LiteArtifacts | None = None
@@ -338,9 +439,21 @@ def score(text: str) -> dict[str, Any]:
         )
         return _envelope(_padded(cleaned, words), ai)
 
-    t_human = float(thresholds["t_human"])
-    t_ai = float(thresholds["t_ai"])
-    probability = float(bundle.model.predict_proba([cleaned])[0])
+    # Prefer the fitted stacker + Platt calibration from training. Its thresholds live on
+    # the artifact and were tuned on the same calibrated scores, so mixing them with a raw
+    # component probability would make the bands meaningless.
+    raw = float(bundle.model.predict_proba([cleaned])[0])
+    stacker = bundle.stacker
+    if stacker is not None and stacker.thresholds is not None:
+        t_human = float(stacker.thresholds.t_human)
+        t_ai = float(stacker.thresholds.t_ai)
+        probability = float(stacker.probability({"log_word_count": math.log(max(1, words)),
+                                                 "logit_classical": _logit(raw)}))
+    else:
+        t_human = float(thresholds["t_human"])
+        t_ai = float(thresholds["t_ai"])
+        probability = raw
+    calibrated = stacker is not None and stacker.thresholds is not None
     if probability <= t_human:
         verdict = "likely_human"
     elif probability >= t_ai:
@@ -360,7 +473,13 @@ def score(text: str) -> dict[str, Any]:
             "band_collapsed": bool(thresholds.get("band_collapsed")),
             "low_confidence": words < 120,
             "components": [
-                {"name": "classical", "probability": round(probability, 6), "raw": {}, "available": True, "reason": None}
+                {
+                    "name": "classical",
+                    "probability": round(probability, 6),
+                    "raw": {"component_probability": round(raw, 6), "stacked": calibrated},
+                    "available": True,
+                    "reason": None,
+                }
             ],
             "explanation": {
                 "source": "rule_based",

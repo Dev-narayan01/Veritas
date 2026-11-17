@@ -1,28 +1,38 @@
 {
   "lite": {
-    "t_ai": 0.9551733496934256,
-    "t_human": 0.2504622511010209,
+    "t_ai": 0.9950117905419555,
+    "t_human": 0.8775039253965348,
     "target_fpr": 0.01,
     "band_collapsed": false,
-    "per_bucket": {},
-    "achieved": {
-      "human_fpr_at_t_ai": 0.004,
-      "ai_miss_at_t_human": 0.052,
-      "abstention_rate": 0.146
+    "per_bucket": {
+      "100-250": {
+        "t_ai": 0.967445653638008,
+        "t_human": 0.9281596268857955
+      }
     },
-    "unique_scores": 480
+    "achieved": {
+      "human_fpr_at_t_ai": 0.0010741138560687433,
+      "ai_miss_at_t_human": 0.05026929982046679,
+      "abstention_rate": 0.09877750611246944
+    },
+    "unique_scores": 1184
   },
   "fast": {
-    "t_ai": 0.9716194906032427,
-    "t_human": 0.45360274422280744,
+    "t_ai": 0.9784299456132689,
+    "t_human": 0.9308332575113306,
     "target_fpr": 0.01,
     "band_collapsed": false,
-    "per_bucket": {},
-    "achieved": {
-      "human_fpr_at_t_ai": 0.004,
-      "ai_miss_at_t_human": 0.052,
-      "abstention_rate": 0.122
+    "per_bucket": {
+      "100-250": {
+        "t_ai": 0.9400203890216121,
+        "t_human": 0.9400203890216121
+      }
     },
-    "unique_scores": 480
+    "achieved": {
+      "human_fpr_at_t_ai": 0.0010741138560687433,
+      "ai_miss_at_t_human": 0.05026929982046679,
+      "abstention_rate": 0.035207823960880194
+    },
+    "unique_scores": 1165
   }
 }
