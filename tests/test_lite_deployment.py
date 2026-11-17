@@ -214,3 +214,16 @@ def test_the_committed_lite_bundle_is_present_and_loadable() -> None:
     assert payload["artifact_source"] == "cpu", payload["artifact_notes"]
     assert payload["models_loaded"]["classical"] is True
     assert payload["status"] == "ok"
+
+
+def test_no_dependency_file_shadows_requirements_txt() -> None:
+    """Vercel prefers pyproject.toml over requirements.txt when both sit by the functions.
+
+    Adding ``api/pyproject.toml`` for a lint setting silently changed the deployed
+    dependency set: the build log switched from "Installing required dependencies from
+    api/requirements.txt" to uv.lock, and the functions then failed with
+    ``No module named 'joblib'`` even though the code was fine.
+    """
+    for shadow in ("pyproject.toml", "Pipfile", "Pipfile.lock"):
+        assert not (API / shadow).exists(), f"api/{shadow} would override api/requirements.txt"
+    assert (API / "requirements.txt").is_file()

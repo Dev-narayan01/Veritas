@@ -1,0 +1,11 @@
+# Ruff configuration.
+#
+# Kept in ruff.toml rather than pyproject.toml on purpose: Vercel treats a
+# pyproject.toml next to the functions as the dependency declaration and then
+# ignores api/requirements.txt, which silently removes numpy/scikit-learn/joblib
+# from the deployed bundle. ruff.toml means nothing to Vercel.
+
+[lint.per-file-ignores]
+# api/handlers/*.py are fragments spliced into a single file by
+# scripts/build_api.py; they use the inlined core's names without importing it.
+"api/handlers/*.py" = ["F821"]
