@@ -122,11 +122,7 @@ def _threshold_metrics(
     scores: np.ndarray, labels: np.ndarray, thresholds: ModeThresholds,
     words: np.ndarray,
 ) -> dict[str, float]:
-    verdicts = []
-    for score, count in zip(scores, words):
-        t_human, t_ai = thresholds.for_length(int(count))
-        verdicts.append("ai" if score >= t_ai else "human" if score <= t_human else "uncertain")
-    verdicts_arr = np.asarray(verdicts)
+    verdicts_arr = _verdicts(scores, thresholds, words)
     humans = labels == 0
     ai = labels == 1
     return {
@@ -148,11 +144,7 @@ def _confusion(scores: np.ndarray, labels: np.ndarray, thresholds: ModeThreshold
     ``positive`` means "the system said likely_ai". Counting abstentions separately is the
     point: a detector that abstains on the hard cases is different from one that guesses.
     """
-    verdicts = []
-    for score, count in zip(scores, words):
-        t_human, t_ai = thresholds.for_length(int(count))
-        verdicts.append("ai" if score >= t_ai else "human" if score <= t_human else "uncertain")
-    verdicts_arr = np.asarray(verdicts)
+    verdicts_arr = _verdicts(scores, thresholds, words)
     humans, ai = labels == 0, labels == 1
     return {
         "ai_true_positive": int(np.sum(verdicts_arr[ai] == "ai")),
@@ -164,17 +156,38 @@ def _confusion(scores: np.ndarray, labels: np.ndarray, thresholds: ModeThreshold
     }
 
 
-def _accuracy_by_length(scores: np.ndarray, labels: np.ndarray, words: np.ndarray) -> dict[str, dict]:
-    """Accuracy at a fixed 0.5 cut-off inside each length bucket, with n."""
+def _verdicts(scores: np.ndarray, thresholds: ModeThresholds, words: np.ndarray) -> np.ndarray:
+    """The three-way verdict the system would actually report, per document."""
+    return np.asarray(
+        [
+            "ai" if score >= thresholds.for_length(int(count))[1]
+            else "human" if score <= thresholds.for_length(int(count))[0]
+            else "uncertain"
+            for score, count in zip(scores, words)
+        ]
+    )
+
+
+def _accuracy_by_length(
+    scores: np.ndarray, labels: np.ndarray, words: np.ndarray, thresholds: ModeThresholds
+) -> dict[str, dict]:
+    """Accuracy inside each length bucket, using the thresholds the system reports with.
+
+    A fixed 0.5 cut-off here would publish an accuracy that no user ever sees. Abstentions
+    are counted as "not AI" — the same rule as the confusion matrix — and their share is
+    reported alongside so the bucket cannot flatter itself by abstaining on hard documents.
+    """
+    verdicts = _verdicts(scores, thresholds, words)
     buckets: dict[str, dict] = {}
     for bucket in ("<100", "100-250", "250-500", "500+"):
         mask = np.asarray([length_bucket(int(word)) == bucket for word in words])
         if not mask.any():
             continue
-        predicted = (scores[mask] >= 0.5).astype(int)
+        called_ai = verdicts[mask] == "ai"
         buckets[bucket] = {
             "n": int(mask.sum()),
-            "accuracy": round(float(np.mean(predicted == labels[mask])), 4),
+            "accuracy": round(float(np.mean(called_ai == (labels[mask] == 1))), 4),
+            "abstained": int(np.sum(verdicts[mask] == "uncertain")),
         }
     return buckets
 
@@ -315,7 +328,11 @@ def _confusion_plot(mode_scores: dict[str, dict], split: str) -> str:
                     fontsize=11, color="black")
     ax.set_xticks([0, 1], ["verdict human", "verdict AI"])
     ax.set_yticks([0, 1], ["truly human", "truly AI"])
+    abstained = (
+        f"abstained: {matrix['human_abstained']} human / {matrix['ai_abstained']} AI"
+    )
     ax.set_title(f"Confusion — {mode} on {split}\n(abstentions counted as not-AI)", fontsize=8)
+    ax.set_xlabel(abstained, fontsize=7)
     fig.tight_layout()
     path = PLOTS_DIR / f"confusion_{split}.png"
     fig.savefig(path)
@@ -349,7 +366,7 @@ def _length_plot(mode_scores: dict[str, dict], split: str) -> str:
         return ""
     ax.set_ylim(0, 1.05)
     ax.set_xlabel("document length (words)")
-    ax.set_ylabel("accuracy at 0.5")
+    ax.set_ylabel("accuracy at the tuned thresholds")
     ax.set_title(f"Accuracy by length — {split}")
     ax.legend(fontsize=6)
     fig.tight_layout()
@@ -431,7 +448,7 @@ def main(argv: list[str] | None = None) -> int:
                     metrics["components"] = list(MODE_COMPONENTS[mode])
                     metrics["breakdown"] = _breakdowns(frame, ids, scores, labels)
                     metrics["confusion"] = _confusion(scores, labels, mode_thresholds, words)
-                    metrics["accuracy_by_length"] = _accuracy_by_length(scores, labels, words)
+                    metrics["accuracy_by_length"] = _accuracy_by_length(scores, labels, words, mode_thresholds)
                 mode_scores[mode] = {
                     "metrics": metrics, "labels": labels, "scores": scores,
                 }

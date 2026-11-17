@@ -104,6 +104,7 @@ describe('Evaluation page', () => {
     expect(await screen.findByText('Confusion matrices and accuracy by length')).toBeTruthy()
     expect(screen.getByText('false positive')).toBeTruthy()
     expect(screen.getByText(/abstained: AI texts 30/)).toBeTruthy()
+    expect(screen.getByText(/n=40, abst 12/)).toBeTruthy()
   })
 
   it('does not show a smoke warning for a non-smoke run', async () => {

@@ -144,32 +144,51 @@ Held-out first, because that is the honest headline.
 
 ### What the verdicts actually look like
 
-The confusion matrices below count **reported verdicts** at the tuned thresholds, with
-abstentions kept in their own cells rather than folded into either side. Source:
+The confusion matrices below count verdicts at the tuned thresholds. Abstention is not a third
+column in the 2×2: an abstained document is reported as "not AI", so it lands in the left-hand
+column. The counts are published separately next to the matrix (and printed on the figure) so
+the number of documents the system declined to call is never hidden inside a true-negative. Source:
 `ml/artifacts/metrics.json → splits.<split>.modes.<mode>.confusion`.
 
 | split | mode | true neg | false pos | false neg | true pos | abstained (human / AI) |
 |---|---|---|---|---|---|---|
 | `test` | lite | 249 | 1 | 71 | 179 | 34 / 60 |
+| `test` | fast | 249 | 1 | 75 | 175 | 14 / 54 |
 | `test_ood` | lite | 199 | 51 | 45 | 205 | 148 / 42 |
+| `test_ood` | fast | 211 | 39 | 48 | 202 | 144 / 45 |
 
 The asymmetry is deliberate: at a 1% false-positive target the system misses more AI text than
 it accuses of human text, which is the right way round for a tool that must never be the only
 reason a student is accused of something.
 
-Accuracy by length shows why short documents are the hard case
-(`splits.test_ood.modes.lite.accuracy_by_length`):
+Accuracy by length is measured with the thresholds the system actually reports at, not a
+magic 0.5 cut-off (`splits.<split>.modes.<mode>.accuracy_by_length`). Buckets below 100 words
+abstain heavily, so their accuracy comes from a much smaller effective sample:
 
-| length bucket | in-domain accuracy | held-out accuracy |
-|---|---|---|
-| < 100 words | 0.9133 (n=196) | 0.6263 (n=99) |
-| 100–250 | 0.9268 (n=246) | 0.7139 (n=339) |
-| 250–500 | 0.9216 (n=51) | 0.3860 (n=57) |
-| 500+ | 0.8571 (n=7) | 0.2000 (n=5) |
+| length | lite accuracy | abstained | fast accuracy | abstained |
+|---|---|---|---|---|
+| **`test` `< 100`** | 0.8622 (n=196) | 37 | 0.8571 | 21 |
+| **`test` 100–250** | 0.8293 (n=246) | 48 | 0.8211 | 41 |
+| **`test` 250–500** | 0.9412 (n=51) | 8 | 0.9216 | 6 |
+| **`test` 500+** | 1.0000 (n=7) | 1 | 1.0000 | 0 |
+| **`test_ood` `< 100`** | 0.9293 (n=99) | 51 | 0.9091 | 46 |
+| **`test_ood` 100–250** | 0.8083 (n=339) | 117 | 0.8201 | 121 |
+| **`test_ood` 250–500** | 0.6140 (n=57) | 20 | 0.7193 | 21 |
+| **`test_ood` 500+** | 0.6000 (n=5) | 2 | 0.8000 | 1 |
 
-The 500+ bucket has five documents and must not be read as a trend — it is shown with its `n`
-for exactly that reason. The < 100-word held-out drop is real and consistent with the
-threshold-free ROC-AUC breakdown (`<100` bucket AUROC 0.6661 against 0.8783 for 100–250 words).
+Read this carefully, because the naive reading is wrong:
+
+* the `test_ood` `< 100` bucket *looks* better than the 100–250 bucket only because 51 of its 99
+  documents were abstentions, and an abstention counts as "not AI" — which is correct for most
+  of a balanced bucket but is not a decision;
+* the threshold-free view says the opposite and is the one to trust on difficulty: `< 100`
+  bucket AUROC **0.6661** against **0.8783** for 100–250 words. Short documents are genuinely
+  harder; the accuracy column hides that behind abstentions;
+* the `500+` bucket holds 7 and 5 documents. It is published with its `n` rather than dropped,
+  but no conclusion should be drawn from it.
+
+The lesson is exactly the one this project keeps relearning: an accuracy number without its
+abstention rate and its `n` is not interpretable, which is why all three ship together.
 
 Two things to read honestly here:
 

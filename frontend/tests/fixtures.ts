@@ -122,7 +122,10 @@ export const metrics = {
               ai_abstained: 30,
               human_abstained: 12,
             },
-            accuracy_by_length: { '<100': { n: 40, accuracy: 0.8 }, '100-250': { n: 120, accuracy: 0.9 } },
+            accuracy_by_length: {
+              '<100': { n: 40, accuracy: 0.8, abstained: 12 },
+              '100-250': { n: 120, accuracy: 0.9, abstained: 8 },
+            },
             breakdown: {
               domain: { reddit: { n: 100, roc_auc: 0.9 } },
               length_bucket: { '<100': { n: 40, roc_auc: 0.84 } },

@@ -296,8 +296,10 @@ function ConfusionAndLength({ data }: { data: MetricsResponse }) {
     <Card title="Confusion matrices and accuracy by length">
       <p className="muted mb-2 text-xs">
         Counts of the verdicts the system actually reported at the tuned thresholds.
-        Abstentions are counted as "not AI", which is why the false-negative cell is larger than
-        the false-positive cell — that asymmetry is the 1% false-positive target working.
+        An abstention is reported as &ldquo;not AI&rdquo;, so it lands in the left-hand column; the
+        number of abstentions is shown separately for each true class. That is why the
+        false-negative cell is larger than the false-positive cell — that asymmetry is the 1%
+        false-positive target working as intended.
       </p>
       <div className="grid gap-3 md:grid-cols-2">
         {rows.map((row) => {
@@ -328,7 +330,9 @@ function ConfusionAndLength({ data }: { data: MetricsResponse }) {
                 abstained: AI texts {c.ai_abstained ?? 0} · human texts {c.human_abstained ?? 0}
               </p>
               <table className="mt-2 w-full text-[11px]">
-                <caption className="sr-only">Accuracy by document length</caption>
+                <caption className="sr-only">
+                  Accuracy by document length at the tuned thresholds, with abstention counts
+                </caption>
                 <thead>
                   <tr>
                     {buckets.map((bucket) => (
@@ -345,7 +349,13 @@ function ConfusionAndLength({ data }: { data: MetricsResponse }) {
                       return (
                         <td key={bucket} className="p-0.5 font-mono">
                           {entry ? entry.accuracy.toFixed(2) : '—'}
-                          {entry && <span className="muted"> (n={entry.n})</span>}
+                          {entry && (
+                            <span className="muted">
+                              {' '}
+                              (n={entry.n}
+                              {entry.abstained !== undefined ? `, abst ${entry.abstained}` : ''})
+                            </span>
+                          )}
                         </td>
                       )
                     })}
