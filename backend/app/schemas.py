@@ -179,12 +179,20 @@ class BatchResult(BaseModel):
 
 
 class CodeMatch(BaseModel):
+    """A structural code match between two files.
+
+    ``functions`` lists the *original* names; ``function_pairs`` gives the (original, copy)
+    names for each match, because a copied function is usually renamed and reporting only
+    ``task_0`` would leave a reader looking for that name in a file that calls it ``calc_0``.
+    """
+
     a: str
     b: str
     similarity: float
     lines_a: list[int] = Field(default_factory=list)
     lines_b: list[int] = Field(default_factory=list)
     functions: list[str] = Field(default_factory=list)
+    function_pairs: list[tuple[str, str]] = Field(default_factory=list)
 
 
 class DocumentResult(BaseModel):

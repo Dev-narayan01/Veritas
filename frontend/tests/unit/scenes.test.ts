@@ -51,3 +51,42 @@ describe('computeLayout', () => {
     ])
   })
 })
+
+describe('similarity graph edges', () => {
+  it('labels code and text edges differently so a structural match is not read as copied prose', () => {
+    const batch: BatchResult = {
+      matrix: [
+        [100, 100],
+        [100, 100],
+      ],
+      nodes: [
+        { id: 'a', label: 'a.py', words: 70, verdict: 'too_short' },
+        { id: 'b', label: 'b.py', words: 70, verdict: 'too_short' },
+      ],
+      labels: ['a.py', 'b.py'],
+      pairs: [],
+      edges: [{ a: 'a.py', b: 'b.py', weight: 100, kind: 'code' as const }],
+    }
+    const { links } = computeLayout(batch)
+    expect(links).toHaveLength(1)
+    expect(links[0].kind).toBe('code')
+    expect(links[0].weight).toBe(100)
+  })
+
+  it('defaults an unlabelled edge to text', () => {
+    const batch: BatchResult = {
+      matrix: [
+        [100, 42],
+        [42, 100],
+      ],
+      nodes: [
+        { id: 'a', label: 'a.txt', words: 200, verdict: 'likely_human' },
+        { id: 'b', label: 'b.txt', words: 200, verdict: 'likely_human' },
+      ],
+      labels: ['a.txt', 'b.txt'],
+      pairs: [],
+      edges: [{ a: 'a.txt', b: 'b.txt', weight: 42 }],
+    }
+    expect(computeLayout(batch).links[0].kind).toBe('text')
+  })
+})

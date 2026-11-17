@@ -35,6 +35,7 @@ interface GraphLink {
   source: number
   target: number
   weight: number
+  kind: 'text' | 'code'
 }
 
 /** Run a fixed number of force ticks and return stable positions. */
@@ -45,6 +46,7 @@ export function computeLayout(batch: BatchResult): { nodes: PositionedNode[]; li
       source: batch.nodes.findIndex((node) => node.label === edge.a),
       target: batch.nodes.findIndex((node) => node.label === edge.b),
       weight: edge.weight,
+      kind: edge.kind ?? 'text',
     }))
     .filter((link) => link.source >= 0 && link.target >= 0 && link.weight >= MIN_EDGE_PERCENT)
 
@@ -106,7 +108,13 @@ function Galaxy({
             <bufferGeometry>
               <bufferAttribute attach="attributes-position" args={[new Float32Array([...from, ...to]), 3]} />
             </bufferGeometry>
-            <lineBasicMaterial color="#7C5CFF" transparent opacity={Math.min(0.9, link.weight / 60)} />
+            {/* Code similarity is a structural finding, not copied prose: it gets its own
+                colour so a 100% code edge is never read as a quoted passage. */}
+            <lineBasicMaterial
+              color={link.kind === 'code' ? '#22D3EE' : '#7C5CFF'}
+              transparent
+              opacity={Math.min(0.9, link.weight / 60)}
+            />
           </line>
         )
       })}
@@ -151,9 +159,12 @@ export function SimilarityGalaxy({
 /** Keyboard-accessible mirror of the graph: the same information, no canvas. */
 export function GalaxyList({ batch, onSelect }: { batch: BatchResult; onSelect: (index: number) => void }) {
   const [active, setActive] = useState<number | null>(null)
+  const links = batch.edges ?? []
   return (
     <ul className="space-y-1 text-sm" aria-label="Documents in the similarity graph">
-      {batch.nodes.map((node, index) => (
+      {batch.nodes.map((node, index) => {
+        const edges = links.filter((edge) => edge.a === node.label || edge.b === node.label)
+        return (
         <li key={node.id}>
           <button
             className="btn w-full !justify-between !rounded-lg"
@@ -164,11 +175,20 @@ export function GalaxyList({ batch, onSelect }: { batch: BatchResult; onSelect: 
             <span>{node.label}</span>
             <span className="muted font-mono text-xs">
               {node.words} words · {node.verdict.replace('_', ' ')}
+              {edges.length > 0 &&
+                ` · ${edges
+                  .map((edge) => {
+                    const other = edge.a === node.label ? edge.b : edge.a
+                    const label = edge.kind === 'code' ? 'code' : 'text'
+                    return `${edge.weight.toFixed(0)}% ${label} with ${other}`
+                  })
+                  .join(', ')}`}
               {active === index ? ' · selected' : ''}
             </span>
           </button>
         </li>
-      ))}
+        )
+      })}
     </ul>
   )
 }

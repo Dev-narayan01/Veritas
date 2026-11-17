@@ -42,6 +42,21 @@ class Match:
     source_id: str
     method: str = "alignment"  # alignment | sentence | semantic
 
+    @property
+    def query_span(self) -> tuple[int, int]:
+        """Character span in the query document.
+
+        Batch comparison and report rendering both need the span as a pair; keeping the
+        stored form as two named fields makes the aligner's output readable in tests, so the
+        tuple is exposed as a property rather than duplicated as a field.
+        """
+        return (self.query_start, self.query_end)
+
+    @property
+    def source_span(self) -> tuple[int, int]:
+        """Character span in the source document."""
+        return (self.source_start, self.source_end)
+
 
 def _char_span(spans: list[tuple[int, int]], start_word: int, end_word: int, length: int) -> tuple[int, int]:
     """Convert word indices to character spans, clamped to the text length."""

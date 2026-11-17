@@ -176,7 +176,7 @@ export interface BatchResult {
   labels: string[]
   pairs: BatchPair[]
   nodes: Array<{ id: string; label: string; words: number; verdict: Verdict }>
-  edges: Array<{ a: string; b: string; weight: number }>
+  edges: Array<{ a: string; b: string; weight: number; kind?: 'text' | 'code' }>
 }
 
 export interface CodeMatch {
@@ -186,6 +186,7 @@ export interface CodeMatch {
   lines_a: number[]
   lines_b: number[]
   functions: string[]
+  function_pairs?: Array<[string, string]>
 }
 
 export interface DocumentResult {

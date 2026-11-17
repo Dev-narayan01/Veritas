@@ -31,6 +31,13 @@ build to audit.
   originally escaped a network failure as an unhandled 500; every `requests` failure is now a
   422 naming the cause (`url_tls_failed`, `url_timeout`, `url_unreachable`, `url_http_error`),
   with an endpoint-level fallback so no input can ever produce a bare 500.
+- [x] **A8 Batch comparison works and validates end to end** — batch mode was broken: `batch.py`
+  read `match.query_span`, an attribute the aligner never had, so every batch analysis died with
+  `'Match' object has no attribute 'query_span'`. Spans are now properties on `Match`, batch has
+  5 tests, and a live run produced `[[100, 98.26], [48.8, 100]]` with one edge. Code plagiarism
+  detects a fully renamed copy at similarity 1.0 and now reports `(original → copy)` function
+  pairs, and those structural matches also appear on the similarity graph as `kind: "code"` edges
+  so the graph cannot contradict the code card.
 - [x] **A5 Parser and security coverage** — `tests/test_parsers.py` (real PDF/DOCX/PPTX/TXT/code
   fixtures, ZIP traversal refusal, zip-bomb refusal, SSRF blocking, oversize page) and
   `tests/test_security.py` (upload cap, type refusal, error shape, limiter, path traversal on
@@ -77,7 +84,7 @@ build to audit.
 - [x] **F1** REPORT, LITERATURE, EXPLAINED, QUICKSTART, DEPLOY, HUMAN_STEPS, KAGGLE
 - [x] **F2** `scripts/smoke.sh`, `scripts/check_frontend.sh`, `scripts/finalize.sh`, test
   suites, manifest, this checklist
-- [x] **F3** Gates as of the final run: `pytest -q` **102 passed**, `vitest run` **57 passed**,
+- [x] **F3** Gates as of the final run: `pytest -q` **109 passed**, `vitest run` **59 passed**,
   `tsc --noEmit` clean, `npm run build` clean, `ruff` clean, `scripts/smoke.sh` all passed,
   `scripts/finalize.sh` **ALL GATES PASSED** (Playwright reported `SKIPPED`).
 

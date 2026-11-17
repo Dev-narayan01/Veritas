@@ -360,7 +360,11 @@ export function ResultsPage() {
                 </div>
                 <p className="muted mt-1 text-xs">
                   matched lines A: {match.lines_a.slice(0, 12).join(', ') || '—'} · B: {match.lines_b.slice(0, 12).join(', ') || '—'}
-                  {match.functions.length > 0 && ` · matching functions: ${match.functions.join(', ')}`}
+                  {match.functions.length > 0 &&
+                    ` · matching functions: ${(match.function_pairs ?? match.functions.map((name) => [name, name] as [string, string]))
+                      .slice(0, 8)
+                      .map(([original, copy]) => (original === copy ? original : `${original} → ${copy}`))
+                      .join(', ')}`}
                 </p>
               </li>
             ))}

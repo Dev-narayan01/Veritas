@@ -47,6 +47,32 @@ def _covered_percent(text_length: int, spans: list[tuple[int, int]]) -> float:
     return round(100.0 * total / text_length, 2)
 
 
+def merge_code_edges(result: BatchResult, code_matches: list, threshold: float = 5.0) -> BatchResult:
+    """Add code-similarity edges the word aligner cannot see.
+
+    Two copies of the same program with every identifier renamed share almost no words, so the
+    text aligner reports 0% and the graph would show two unrelated files while the code card
+    reports a 100% match. That contradiction is worse than either number alone, so the
+    structural score is added as an edge labelled with its own kind.
+    """
+    known = {(edge["a"], edge["b"]) for edge in result.edges}
+    for match in code_matches:
+        if match.similarity * 100 < threshold:
+            continue
+        pair = (match.a, match.b)
+        if pair in known or (pair[1], pair[0]) in known:
+            continue
+        result.edges.append(
+            {
+                "a": match.a,
+                "b": match.b,
+                "weight": round(match.similarity * 100, 2),
+                "kind": "code",
+            }
+        )
+    return result
+
+
 def compare(documents: list[BatchDocument]) -> BatchResult:
     """Compare all pairs and return the matrix, pairs and graph data."""
     labels = [d.label for d in documents]
@@ -98,7 +124,12 @@ def compare(documents: list[BatchDocument]) -> BatchResult:
         for d in documents
     ]
     edges = [
-        {"a": p.a, "b": p.b, "weight": round(max(p.percent_ab, p.percent_ba), 2)}
+        {
+            "a": p.a,
+            "b": p.b,
+            "weight": round(max(p.percent_ab, p.percent_ba), 2),
+            "kind": "text",
+        }
         for p in pairs
         if max(p.percent_ab, p.percent_ba) >= 5.0
     ]

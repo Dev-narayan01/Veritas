@@ -143,13 +143,18 @@ def compare_all(code_files: list[CodeFile], threshold: float | None = None) -> l
             score = similarity(a, b)
             if score < limit:
                 continue
-            words_a, words_b = set(a.tokens), set(b.tokens)
-            shared_functions = [
-                name for name, body in a.functions.items()
-                if body and any(body[: min(20, len(body))] == other[: min(20, len(other))]
-                                for other in b.functions.values())
-            ]
-            del words_a, words_b
+            shared_functions: list[str] = []
+            function_pairs: list[tuple[str, str]] = []
+            for name, body in a.functions.items():
+                if not body:
+                    continue
+                for other_name, other in b.functions.items():
+                    if not other:
+                        continue
+                    if body[: min(20, len(body))] == other[: min(20, len(other))]:
+                        shared_functions.append(name)
+                        function_pairs.append((name, other_name))
+                        break
             results.append(
                 CodeMatch(
                     a=a.name,
@@ -158,6 +163,7 @@ def compare_all(code_files: list[CodeFile], threshold: float | None = None) -> l
                     lines_a=_matched_lines(a, b),
                     lines_b=_matched_lines(b, a),
                     functions=shared_functions,
+                    function_pairs=function_pairs,
                 )
             )
     results.sort(key=lambda m: m.similarity, reverse=True)

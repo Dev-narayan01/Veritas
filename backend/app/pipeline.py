@@ -23,7 +23,7 @@ from .logging_setup import get_logger
 from .parsers import parse_file
 from .parsers.archive import extract
 from .parsers.base import ParseError, ParsedDoc
-from .plagiarism.batch import BatchDocument, compare
+from .plagiarism.batch import BatchDocument, compare, merge_code_edges
 from .plagiarism.code_sim import CodeFile, compare_all
 from .plagiarism.corpus import PlagiarismCorpus
 from .plagiarism.engine import analyse as analyse_plagiarism
@@ -221,6 +221,8 @@ def _run(job: Job, progress: Progress) -> AnalysisResult:
         progress.done("batch")
 
     code_matches = compare_all(code_files) if len(code_files) > 1 else []
+    if batch_result is not None and code_matches:
+        batch_result = merge_code_edges(batch_result, code_matches)
     if len(code_files) == 1:
         notes.append("only one code file was submitted; cross-file comparison needs at least two")
     if options.get("online"):
