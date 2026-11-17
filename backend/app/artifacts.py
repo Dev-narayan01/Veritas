@@ -162,17 +162,23 @@ class ArtifactRegistry:
         return False, f"unknown component {name}"
 
     def mode_state(self, mode: str) -> ModeState:
-        """A mode is available only when every component and its stacker load."""
+        """A mode is available only when every component and its stacker load.
+
+        Components are checked before the stacker on purpose. Both are missing for the
+        heavy modes in a CPU bundle, and the component is the blocker a reader can act on
+        ("install torch"), whereas "stacker missing" would send them looking in the wrong
+        place. The first *fatal* reason wins: a stacker is useless without its inputs.
+        """
         self.load()
         components = list(MODE_COMPONENTS[mode])
-        if mode in self._stacker_errors:
-            return ModeState(mode, False, self._stacker_errors[mode], components)
-        if mode not in self._stackers:
-            return ModeState(mode, False, f"stacker_{mode}.pkl not found", components)
         for component in components:
             ok, reason = self.component_available(component)
             if not ok:
                 return ModeState(mode, False, f"{component}: {reason}", components)
+        if mode in self._stacker_errors:
+            return ModeState(mode, False, self._stacker_errors[mode], components)
+        if mode not in self._stackers:
+            return ModeState(mode, False, f"stacker_{mode}.pkl not found", components)
         return ModeState(mode, True, None, components)
 
     def all_modes(self) -> list[ModeState]:

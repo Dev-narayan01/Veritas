@@ -272,3 +272,22 @@ def test_metrics_expose_ood_first_and_never_fabricate(client: Any) -> None:
 
 def test_plot_that_does_not_exist_is_404(client: Any) -> None:
     assert client.get("/api/metrics/plots/nope.png").status_code == 404
+
+
+def test_unavailable_mode_names_the_blocking_component(client: Any) -> None:
+    """The reason must name what is actually missing.
+
+    In a CPU bundle both the neural weights *and* the stackers for the heavy modes are absent.
+    Reporting "stacker missing" would send a reader looking in the wrong place; the component
+    is the blocker they can act on.
+    """
+    modes = {mode["mode"]: mode for mode in client.get("/api/health").json()["modes"]}
+    for name in ("standard", "deep"):
+        entry = modes[name]
+        if entry["available"]:
+            continue
+        assert entry["reason"], f"{name} is unavailable and must say why"
+        assert not entry["reason"].startswith("stacker"), (
+            f"{name} should blame the component it cannot run, not its stacker: {entry['reason']}"
+        )
+        assert "transformer" in entry["reason"] or "torch" in entry["reason"]

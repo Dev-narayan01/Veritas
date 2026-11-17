@@ -103,8 +103,9 @@ opt-in online source check.
 | `standard` | `classical` + `ppl_gpt2` + `binoculars` | **no** — `torch` absent |
 | `deep` | `classical` + `fast_detectgpt` | **no** — `torch` absent |
 
-`/api/health` returns this table with a `reason` for every unavailable mode, and each result
-carries `components_run` / `components_unavailable`. The UI disables a mode rather than letting
+`/api/health` returns this table with a `reason` for every unavailable mode — naming the
+component that is missing, not merely the stacker built on top of it — and each result carries
+`components_run` / `components_unavailable`. The UI disables a mode rather than letting
 it fail, and never advertises one whose components did not run.
 
 ### Calibration and thresholds
@@ -295,7 +296,7 @@ the UI next to the number.
 
 | gate | result |
 |---|---|
-| `pytest -q` | 98 passed (API contract, text pipeline, detector, plagiarism, Lite functions, naming/no-placeholder gate) |
+| `pytest -q` | 99 passed (API contract, text pipeline, detector, plagiarism, Lite functions, naming/no-placeholder gate) |
 | `vitest run` | 55 passed (span maths, tier decision, API-base resolution, formatting, Viewer, page-level render tests) |
 | `npm run build` | passes (TypeScript strict, three.js in its own lazy chunk) |
 | `scripts/smoke.sh` | passes against a live server: health, version, samples, metrics, analysis, exports, history, retain=false, delete, corpus stats |

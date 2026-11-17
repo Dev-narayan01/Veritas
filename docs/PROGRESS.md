@@ -22,6 +22,9 @@ build to audit.
   attack changes ≥ 80 % of documents *and* changes them the right way (a shuffle must keep the
   word multiset, homoglyphs must insert Cyrillic). A perturbation that silently stops working
   now fails the build instead of producing a flattering robustness table.
+- [x] **A6 Honest unavailability reason** — the heavy modes name the missing component
+  (`transformer: weights missing`) rather than their stacker; a stacker is useless without its
+  inputs, so blaming it hides the real blocker. Regression-tested in `tests/test_api.py`.
 - [x] **A5 Parser and security coverage** — `tests/test_parsers.py` (real PDF/DOCX/PPTX/TXT/code
   fixtures, ZIP traversal refusal, zip-bomb refusal, SSRF blocking, oversize page) and
   `tests/test_security.py` (upload cap, type refusal, error shape, limiter, path traversal on
@@ -68,7 +71,7 @@ build to audit.
 - [x] **F1** REPORT, LITERATURE, EXPLAINED, QUICKSTART, DEPLOY, HUMAN_STEPS, KAGGLE
 - [x] **F2** `scripts/smoke.sh`, `scripts/check_frontend.sh`, `scripts/finalize.sh`, test
   suites, manifest, this checklist
-- [x] **F3** Gates as of the final run: `pytest -q` **98 passed**, `vitest run` **55 passed**,
+- [x] **F3** Gates as of the final run: `pytest -q` **99 passed**, `vitest run` **55 passed**,
   `tsc --noEmit` clean, `npm run build` clean, `ruff` clean, `scripts/smoke.sh` all passed,
   `scripts/finalize.sh` **ALL GATES PASSED** (Playwright reported `SKIPPED`).
 
