@@ -71,7 +71,7 @@ build to audit.
 - [x] **F1** REPORT, LITERATURE, EXPLAINED, QUICKSTART, DEPLOY, HUMAN_STEPS, KAGGLE
 - [x] **F2** `scripts/smoke.sh`, `scripts/check_frontend.sh`, `scripts/finalize.sh`, test
   suites, manifest, this checklist
-- [x] **F3** Gates as of the final run: `pytest -q` **99 passed**, `vitest run` **55 passed**,
+- [x] **F3** Gates as of the final run: `pytest -q` **99 passed**, `vitest run` **57 passed**,
   `tsc --noEmit` clean, `npm run build` clean, `ruff` clean, `scripts/smoke.sh` all passed,
   `scripts/finalize.sh` **ALL GATES PASSED** (Playwright reported `SKIPPED`).
 

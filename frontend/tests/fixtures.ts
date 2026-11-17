@@ -168,7 +168,7 @@ export const metrics = {
   },
   corpus_stats: { documents: 30 },
   embedding_projection: null,
-  plots: [],
+  plots: ['roc_test.png', 'roc_test_ood.png', 'confusion_test_ood.png', 'split_lengths.png'],
   plots_base: '/api/metrics/plots',
   thresholds: null,
   manifest_notes: [],

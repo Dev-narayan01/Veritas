@@ -3,7 +3,7 @@
  * assert the same user-visible guarantees (honest mode reporting, DOM verdict, OOD first).
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { cleanup, render, screen, within } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, within } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
 import { App } from '../../src/App'
 import { useUi } from '../../src/store'
@@ -99,6 +99,27 @@ describe('Evaluation page', () => {
     expect(screen.getByText('40%')).toBeTruthy()
   })
 
+  it('orders the figures so the held-out variant comes first for each chart', async () => {
+    mount('/evaluation')
+    const heading = await screen.findByText('Figures')
+    expect(heading).toBeTruthy()
+    const images = screen.getAllByRole('img') as HTMLImageElement[]
+    const roc = images.map((image) => image.getAttribute('src') ?? '').filter((src) => src.includes('roc_test'))
+    expect(roc[0]).toContain('roc_test_ood.png')
+    expect(roc[1]).toContain('roc_test.png')
+  })
+
+  it('can filter the figures down to the held-out run', async () => {
+    mount('/evaluation')
+    const toggle = await screen.findByLabelText(/held-out only/i)
+    fireEvent.click(toggle)
+    const sources = (screen.getAllByRole('img') as HTMLImageElement[]).map(
+      (image) => image.getAttribute('src') ?? '',
+    )
+    expect(sources.some((src) => src.includes('_ood'))).toBe(true)
+    expect(sources.some((src) => src.includes('split_lengths'))).toBe(false)
+  })
+
   it('shows the confusion matrix with abstentions counted separately', async () => {
     mount('/evaluation')
     expect(await screen.findByText('Confusion matrices and accuracy by length')).toBeTruthy()
@@ -109,7 +130,7 @@ describe('Evaluation page', () => {
 
   it('does not show a smoke warning for a non-smoke run', async () => {
     mount('/evaluation')
-    await screen.findByText(/Held-out/)
+    await screen.findByText(/Held-out.*headline/)
     expect(screen.queryByText('SMOKE RUN — not results')).toBeNull()
   })
 })

@@ -297,7 +297,7 @@ the UI next to the number.
 | gate | result |
 |---|---|
 | `pytest -q` | 99 passed (API contract, text pipeline, detector, plagiarism, Lite functions, naming/no-placeholder gate) |
-| `vitest run` | 55 passed (span maths, tier decision, API-base resolution, formatting, Viewer, page-level render tests) |
+| `vitest run` | 57 passed (span maths, tier decision, API-base resolution, formatting, Viewer, page-level render tests) |
 | `npm run build` | passes (TypeScript strict, three.js in its own lazy chunk) |
 | `scripts/smoke.sh` | passes against a live server: health, version, samples, metrics, analysis, exports, history, retain=false, delete, corpus stats |
 | `ruff check backend ml api tests` | clean |
@@ -343,7 +343,8 @@ should be regenerated from the artifacts, not edited by hand.
 ### Figures
 
 Every figure is produced by `ml/evaluate.py` from the same run as the tables, and served by the
-API under `/api/metrics/plots/<name>`. The Evaluation page renders them; none are hand-drawn.
+API under `/api/metrics/plots/<name>`. The Evaluation page renders all of them in one gallery, ordered so the held-out variant of each
+chart comes before the in-domain one, with a "held-out only" filter; none are hand-drawn.
 
 | file | what it shows |
 |---|---|
