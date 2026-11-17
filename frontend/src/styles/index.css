@@ -1,0 +1,80 @@
+@import '@fontsource-variable/inter';
+@import '@fontsource/jetbrains-mono';
+@import './tokens.css';
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html {
+    color-scheme: dark;
+  }
+  html.light {
+    color-scheme: light;
+  }
+  body {
+    @apply bg-bg text-ink font-sans antialiased;
+    background-color: var(--bg);
+    color: var(--text);
+  }
+  *:focus-visible {
+    outline: 2px solid var(--focus);
+    outline-offset: 2px;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.001ms !important;
+      transition-duration: 0.001ms !important;
+    }
+  }
+}
+
+@layer components {
+  .card {
+    background-color: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 16px;
+  }
+  .card-2 {
+    background-color: var(--surface-2);
+    border: 1px solid var(--border);
+    border-radius: 16px;
+  }
+  .btn {
+    @apply inline-flex items-center gap-2 rounded-full px-4 py-2 text-sm font-medium transition-colors duration-150;
+    border: 1px solid var(--border);
+    color: var(--text);
+  }
+  .btn:hover {
+    background-color: var(--surface-2);
+  }
+  .btn-primary {
+    background-image: linear-gradient(90deg, var(--accent), var(--accent-2));
+    color: #06080f;
+    border: none;
+  }
+  .btn-primary:hover {
+    filter: brightness(1.06);
+  }
+  .btn:disabled {
+    @apply cursor-not-allowed opacity-50;
+  }
+  .chip {
+    @apply inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-xs;
+    background-color: var(--surface-2);
+    border: 1px solid var(--border);
+  }
+  .muted {
+    color: var(--muted);
+  }
+  .panel-title {
+    @apply text-xs font-semibold uppercase tracking-wider;
+    color: var(--muted);
+  }
+  .skeleton {
+    @apply animate-pulse rounded-lg;
+    background-color: var(--surface-2);
+  }
+}

@@ -1,0 +1,40 @@
+/* Design tokens (spec 13.1). Dark is the default; `.light` on <html> switches. */
+:root {
+  --bg: #070a12;
+  --surface: #0e1424;
+  --surface-2: #141c31;
+  --border: #1f2a44;
+  --text: #e8ecf6;
+  --muted: #8b96ad;
+  --accent: #7c5cff;
+  --accent-2: #22d3ee;
+  --human: #34d399;
+  --uncertain: #fbbf24;
+  --ai: #f87171;
+  --focus: #22d3ee;
+}
+
+html.light {
+  --bg: #f6f7fb;
+  --surface: #ffffff;
+  --surface-2: #eef1f8;
+  --border: #d8deea;
+  --text: #10162a;
+  --muted: #5b6478;
+}
+
+/* Colour-blind-safe 12-colour palette for plagiarism sources. */
+:root {
+  --source-0: #4c72b0;
+  --source-1: #dd8452;
+  --source-2: #55a868;
+  --source-3: #c44e52;
+  --source-4: #8172b3;
+  --source-5: #937860;
+  --source-6: #da8bc3;
+  --source-7: #8c8c8c;
+  --source-8: #ccb974;
+  --source-9: #64b5cd;
+  --source-10: #2f6b4f;
+  --source-11: #9b6a1f;
+}

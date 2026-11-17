@@ -1,0 +1,10 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "note": "This file is documentation only. The project is deployed from frontend/ (see frontend/vercel.json and docs/DEPLOY.md), which builds the site and exposes api/*.py as Python functions.",
+  "functions": {
+    "health.py": { "maxDuration": 10, "memory": 512 },
+    "samples.py": { "maxDuration": 10, "memory": 512 },
+    "metrics.py": { "maxDuration": 10, "memory": 512 },
+    "analyze.py": { "maxDuration": 30, "memory": 1024 }
+  }
+}

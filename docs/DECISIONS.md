@@ -1,0 +1,7 @@
+# Decisions log
+
+Format: `date | decision | reason`. Append one line per decision; never edit history.
+
+2026-11-17 | The workspace contained no previous VeriText build (only a stub README), so Veritas is built from the master specification instead of an upgrade. Historical note: the earlier VeriText deployment referenced by the spec is superseded by this codebase; the old deployment is left untouched for rollback. | Audit of the cloned repository at `4e91c3c` showed a single 10-byte README and no source.
+2026-11-17 | Hugging Face (`huggingface.co`, `datasets`) is not reachable from the build sandbox, so `prepare_data.py` loads real corpora from their GitHub mirrors: the full HC3 corpus (`fangedvampire/ai_against_ai` mirror of `Hello-SimpleAI/HC3`, 24,322 rows, all 5 domains) and arXiv abstracts (`gcunhase/ArXivAbsTitleDataset`). The Hugging Face loaders stay in the code and are tried first, so the Kaggle run uses the canonical sources. | Outbound network in the sandbox is restricted to github.com, codeload.github.com, api.github.com, registry.npmjs.org, pypi.org, files.pythonhosted.org.
+2026-11-17 | Zero-shot scorers (Binoculars / Fast-DetectGPT) and the fine-tuned transformer are optional components: if `torch`/`transformers` or their weights are missing, those modes are reported unavailable by `/health` instead of being faked. | Honesty rule (spec section 2.6): a mode is available only when all components load.

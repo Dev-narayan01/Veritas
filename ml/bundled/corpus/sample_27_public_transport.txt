@@ -1,0 +1,5 @@
+Public Transport — sample note 27
+
+Bus reliability is usually described by the gap between scheduled and actual arrival times. A route can have good average punctuality while a small number of trips run very late, and those trips are the ones passengers remember and plan around.
+
+Community groups often collect the samples that official programmes cannot afford. Training volunteers to use a single probe consistently matters more than buying an expensive instrument, because inconsistency between observers hides real trends.

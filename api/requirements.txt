@@ -1,0 +1,5 @@
+# Vercel Lite functions. Deliberately tiny: no torch, no parsers, no HTML fetching.
+fastapi==0.115.5
+numpy==1.26.4
+scikit-learn==1.5.2
+joblib==1.4.2

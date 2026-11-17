@@ -1,0 +1,8 @@
+# ML pipeline (CPU path). The Kaggle notebook additionally installs torch/transformers,
+# sentence-transformers, faiss and umap-learn; see docs/KAGGLE.md.
+-r ../backend/requirements.txt
+huggingface_hub==0.26.2
+datasets==3.0.1
+scipy==1.14.1
+umap-learn==0.5.7
+sentence-transformers==3.2.1

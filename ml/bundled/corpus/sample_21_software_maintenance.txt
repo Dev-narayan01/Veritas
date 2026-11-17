@@ -1,0 +1,5 @@
+Software Maintenance — sample note 21
+
+Most of the cost of a software system is spent after the first release. Maintenance work includes fixing defects, adapting to new platforms and removing features that no longer earn their keep, and only the first of these feels like traditional engineering.
+
+Light exposure in the morning anchors the internal clock. Evening light delays it, so a late screen habit can shift sleep timing by more than an hour without the person noticing any change in how tired they feel.

@@ -1,0 +1,5 @@
+Water Quality — sample note 26
+
+Water quality monitoring depends on regular sampling at fixed points along a river. Turbidity, dissolved oxygen and phosphate concentration change quickly after rainfall, so a weekly sample can miss the event that matters. Continuous sensors reduce that risk but require calibration and a plan for handling missing readings.
+
+Tests protect maintenance work only when they fail for the right reason. A suite that asserts on formatting will break with every refactor while missing a wrong calculation, which is worse than no suite because it trains the team to ignore failures.
