@@ -1,6 +1,6 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
-  "note": "This file is documentation only. The project is deployed from frontend/ (see frontend/vercel.json and docs/DEPLOY.md), which builds the site and exposes api/*.py as Python functions.",
+  "note": "Documentation only. The reachable config is the repository-root vercel.json, because the Vercel project builds the frontend with `npm --prefix frontend run build` from the repo root; that is also where the api/*.py functions are auto-detected.",
   "functions": {
     "health.py": { "maxDuration": 10, "memory": 512 },
     "samples.py": { "maxDuration": 10, "memory": 512 },

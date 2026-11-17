@@ -70,14 +70,43 @@ message for up to 90 s, then falls back to Lite.
 
 ## 3. Frontend → Vercel
 
-The Vercel project is `veritas`; the site is built from `frontend/` with the repository
-root `api/` folder exposed as Python functions. `frontend/vercel.json` rewrites every
-non-`/api` path to `index.html` (SPA routing) and caches hashed assets immutably.
+The Vercel project is `veritas` (`prj_BaQtllto52VH7KYNU8zosZdEwFsm`). **Deploy from the
+repository root, not from `frontend/`.** Vercel only auto-detects `api/*.py` relative to the
+directory it builds from, so a `frontend/`-rooted build silently ships no API at all. The
+root `vercel.json` therefore owns the build:
+
+| key | value |
+|---|---|
+| `installCommand` | `npm --prefix frontend ci` |
+| `buildCommand` | `npm --prefix frontend run build` |
+| `outputDirectory` | `frontend/dist` |
+| `functions` | `api/{health,samples,metrics}.py` 10 s / 512 MB, `api/analyze.py` 30 s / 1024 MB |
+
+`api/vercel.json` is now documentation only — nothing in it is honoured. `frontend/vercel.json`
+still rewrites every non-`/api` path to `index.html` (SPA routing) and caches hashed assets
+immutably.
+
+The deploy script stages the Lite artifacts into `frontend/public/artifacts/` (gitignored)
+before building, because `api/_lib/core.py` looks there first:
 
 ```bash
+vercel link --project prj_BaQtllto52VH7KYNU8zosZdEwFsm   # once, from the repo root
 bash scripts/deploy_vercel.sh            # preview
 bash scripts/deploy_vercel.sh --prod     # production
 ```
+
+`scripts/deploy_vercel.sh` needs an authenticated `vercel` CLI (`vercel login`, or
+`VERCEL_TOKEN` in the environment). The script fails fast with a clear message if neither is
+present, so a CI run needs `VERCEL_TOKEN`, `VERCEL_ORG_ID` and `VERCEL_PROJECT_ID`.
+
+### Deploying from the CLI vs. from Git
+
+Git-based deploys need the Vercel project connected to `Dev-narayan01/Veritas` **and** the
+branch pushed to GitHub — Vercel only builds commits that exist on the remote. If
+`vercel deploy` fails with `missing_lock_file`, the uploaded file set was incomplete; if an
+API deploy fails with *"repository does not contain the requested branch"*, the branch has
+not been pushed yet. Deploy from a working directory that is at least the repo root; both
+errors disappear once `frontend/package-lock.json` is present and the branch is on the remote.
 
 Environment variable in the Vercel project:
 

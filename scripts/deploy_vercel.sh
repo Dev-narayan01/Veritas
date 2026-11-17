@@ -20,6 +20,21 @@ fi
 : "${VITE_API_BASE_URL:?set VITE_API_BASE_URL in .env.deploy (the Space URL)}"
 echo "building with VITE_API_BASE_URL=$VITE_API_BASE_URL"
 
+# The Lite functions load a model from the bundle, so stage only the four files they need
+# (classical.pkl + thresholds.json for inference, metrics.json + manifest.json for the
+# Evaluation page). They are gitignored, so this never commits a model into the repo.
+ARTIFACTS="../ml/artifacts"
+STAGE="public/artifacts"
+if [ -f "$ARTIFACTS/classical.pkl" ] && [ -f "$ARTIFACTS/thresholds.json" ]; then
+  mkdir -p "$STAGE"
+  for name in classical.pkl thresholds.json metrics.json manifest.json; do
+    [ -f "$ARTIFACTS/$name" ] && cp "$ARTIFACTS/$name" "$STAGE/$name"
+  done
+  echo "staged Lite artifacts: $(du -sh "$STAGE" | cut -f1)"
+else
+  echo "no artifacts to stage; the site will deploy in 'no artifacts loaded' state" >&2
+fi
+
 npm ci
 npm run build
 

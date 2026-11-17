@@ -1,0 +1,12 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "installCommand": "npm --prefix frontend ci",
+  "buildCommand": "npm --prefix frontend run build",
+  "outputDirectory": "frontend/dist",
+  "functions": {
+    "api/health.py": { "maxDuration": 10, "memory": 512 },
+    "api/samples.py": { "maxDuration": 10, "memory": 512 },
+    "api/metrics.py": { "maxDuration": 10, "memory": 512 },
+    "api/analyze.py": { "maxDuration": 30, "memory": 1024 }
+  }
+}
