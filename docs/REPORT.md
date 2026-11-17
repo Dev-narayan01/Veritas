@@ -297,7 +297,7 @@ the UI next to the number.
 | gate | result |
 |---|---|
 | `pytest -q` | 112 passed (API contract, text pipeline, detector, plagiarism, Lite functions, naming/no-placeholder gate) |
-| `vitest run` | 59 passed (span maths, tier decision, API-base resolution, formatting, Viewer, page-level render tests) |
+| `vitest run` | 62 passed (span maths, tier decision, API-base resolution, formatting, Viewer, page-level render tests) |
 | `npm run build` | passes (TypeScript strict, three.js in its own lazy chunk) |
 | `scripts/smoke.sh` | passes against a live server: health, version, samples, metrics, analysis, exports, history, retain=false, delete, corpus stats |
 | `ruff check backend ml api tests` | clean |

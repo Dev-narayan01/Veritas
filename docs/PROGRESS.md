@@ -41,6 +41,11 @@ build to audit.
 - [x] **A9 Exclusion filters verified** — quotes, bibliographies and the 8-word floor each
   leave the raw score intact and zero the filtered score, which is the behaviour the UI toggle
   implies (both default on). Three tests in `tests/test_plagiarism.py`.
+- [x] **A10 The no-WebGL path is rendered, not just decided** — `tests/unit/scenes.test.tsx` now
+  mounts the embedding scatter, the similarity graph and the verdict gauge at tier `off` and
+  asserts there is no `<canvas>` and that the 2D/SVG/list alternative carries the same numbers.
+  This runs in jsdom, so it covers the requirement that Playwright cannot verify here. Writing it
+  immediately caught the test using a friendlier projection shape than the artifact ships.
 - [x] **A5 Parser and security coverage** — `tests/test_parsers.py` (real PDF/DOCX/PPTX/TXT/code
   fixtures, ZIP traversal refusal, zip-bomb refusal, SSRF blocking, oversize page) and
   `tests/test_security.py` (upload cap, type refusal, error shape, limiter, path traversal on
@@ -87,7 +92,7 @@ build to audit.
 - [x] **F1** REPORT, LITERATURE, EXPLAINED, QUICKSTART, DEPLOY, HUMAN_STEPS, KAGGLE
 - [x] **F2** `scripts/smoke.sh`, `scripts/check_frontend.sh`, `scripts/finalize.sh`, test
   suites, manifest, this checklist
-- [x] **F3** Gates as of the final run: `pytest -q` **112 passed**, `vitest run` **59 passed**,
+- [x] **F3** Gates as of the final run: `pytest -q` **112 passed**, `vitest run` **62 passed**,
   `tsc --noEmit` clean, `npm run build` clean, `ruff` clean, `scripts/smoke.sh` all passed,
   `scripts/finalize.sh` **ALL GATES PASSED** (Playwright reported `SKIPPED`).
 

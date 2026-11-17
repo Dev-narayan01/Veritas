@@ -1,6 +1,9 @@
-/** Scene layout maths, tested without a canvas. */
+/** Scene layout maths and fallback rendering, tested without a canvas. */
 import { describe, expect, it } from 'vitest'
-import { computeLayout } from '../../src/components/scenes/SimilarityGalaxy'
+import { render } from '@testing-library/react'
+import { EmbeddingSpace } from '../../src/components/scenes/EmbeddingSpace'
+import { SimilarityGalaxy, computeLayout } from '../../src/components/scenes/SimilarityGalaxy'
+import { VerdictGauge } from '../../src/components/scenes/VerdictGauge'
 import type { BatchResult } from '../../src/types'
 
 const batch = {
@@ -88,5 +91,59 @@ describe('similarity graph edges', () => {
       edges: [{ a: 'a.txt', b: 'b.txt', weight: 42 }],
     }
     expect(computeLayout(batch).links[0].kind).toBe('text')
+  })
+})
+
+// Render-level checks for the "works identically with WebGL disabled" requirement. The
+// Playwright spec asserts this in a real browser; these run here, where no browser binary
+// exists, so the fallback contract is at least covered by CI.
+describe('scene fallbacks without WebGL', () => {
+  it('renders the 2D fallback and no canvas when the tier is off', () => {
+    // The shape the artifact really uses: a flat list of [x, y, z] triples plus a parallel
+    // label array. A test with a friendlier shape would hide a render crash.
+    const projection = {
+      method: 'pca',
+      caption: 'projection of model features; for visual intuition only',
+      points: [
+        [0.1, 0.2, 0.3],
+        [-0.4, 0.5, -0.1],
+      ],
+      labels: [1, 0],
+      misclassified: [0, 0],
+      scores: [0.91, 0.12],
+    }
+    const { container } = render(
+      <EmbeddingSpace tier="off" data={projection as never} />,
+    )
+    expect(container.querySelector('[data-scene-fallback="true"]')).not.toBeNull()
+    expect(container.querySelector('canvas')).toBeNull()
+  })
+
+  it('renders the textual galaxy list when the tier is off', () => {
+    const batch: BatchResult = {
+      matrix: [
+        [100, 42],
+        [42, 100],
+      ],
+      labels: ['a.txt', 'b.txt'],
+      nodes: [
+        { id: 'a', label: 'a.txt', words: 200, verdict: 'likely_human' },
+        { id: 'b', label: 'b.txt', words: 220, verdict: 'likely_ai' },
+      ],
+      pairs: [],
+      edges: [{ a: 'a.txt', b: 'b.txt', weight: 42, kind: 'text' }],
+    }
+    const { container } = render(<SimilarityGalaxy tier="off" batch={batch} onSelect={() => {}} />)
+    expect(container.querySelector('canvas')).toBeNull()
+    expect(container.textContent).toContain('a.txt')
+    expect(container.textContent).toContain('42% text with b.txt')
+  })
+
+  it('renders the SVG gauge when the tier is off', () => {
+    const { container } = render(
+      <VerdictGauge tier="off" probability={0.9} tHuman={0.25} tAi={0.95} color="#F87171" />,
+    )
+    expect(container.querySelector('canvas')).toBeNull()
+    expect(container.querySelector('svg')).not.toBeNull()
   })
 })
