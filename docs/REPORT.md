@@ -296,7 +296,7 @@ the UI next to the number.
 
 | gate | result |
 |---|---|
-| `pytest -q` | 99 passed (API contract, text pipeline, detector, plagiarism, Lite functions, naming/no-placeholder gate) |
+| `pytest -q` | 102 passed (API contract, text pipeline, detector, plagiarism, Lite functions, naming/no-placeholder gate) |
 | `vitest run` | 57 passed (span maths, tier decision, API-base resolution, formatting, Viewer, page-level render tests) |
 | `npm run build` | passes (TypeScript strict, three.js in its own lazy chunk) |
 | `scripts/smoke.sh` | passes against a live server: health, version, samples, metrics, analysis, exports, history, retain=false, delete, corpus stats |

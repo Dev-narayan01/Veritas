@@ -65,14 +65,43 @@ def validate_url(url: str) -> str:
     return url.strip()
 
 
+def _get(session: requests.Session, url: str) -> requests.Response:
+    """One bounded GET, with every network failure turned into an actionable message.
+
+    ``requests`` raises a dozen exception types for what the user experiences as one thing —
+    "that page could not be fetched". Letting them escape produced a 500 with no explanation,
+    so they are all mapped to a 422 that names the cause.
+    """
+    try:
+        return session.get(
+            url, timeout=settings.url_timeout_s, stream=True, allow_redirects=False
+        )
+    except requests.exceptions.SSLError as exc:
+        raise ParseError(
+            "url_tls_failed",
+            f"Could not establish a secure connection to {urlparse(url).hostname}.",
+            422,
+        ) from exc
+    except requests.exceptions.Timeout as exc:
+        raise ParseError(
+            "url_timeout",
+            f"{urlparse(url).hostname} did not respond within {settings.url_timeout_s}s.",
+            422,
+        ) from exc
+    except requests.exceptions.RequestException as exc:
+        raise ParseError(
+            "url_unreachable",
+            f"Could not fetch {urlparse(url).hostname}: {type(exc).__name__}.",
+            422,
+        ) from exc
+
+
 def fetch_text(url: str) -> ParsedDoc:
     """Download a page (bounded in size and time) and extract its main text."""
     validate_url(url)
     session = requests.Session()
     session.headers.update({"User-Agent": USER_AGENT, "Accept": "text/html,text/plain"})
-    response = session.get(
-        url, timeout=settings.url_timeout_s, stream=True, allow_redirects=False
-    )
+    response = _get(session, url)
     redirects = 0
     while response.is_redirect:
         redirects += 1
@@ -82,18 +111,28 @@ def fetch_text(url: str) -> ParsedDoc:
         target = requests.compat.urljoin(url, target)
         validate_url(target)  # re-check every hop: prevents redirect-based SSRF
         url = target
-        response = session.get(
-            url, timeout=settings.url_timeout_s, stream=True, allow_redirects=False
-        )
-    response.raise_for_status()
+        response = _get(session, url)
+    try:
+        response.raise_for_status()
+    except requests.exceptions.HTTPError as exc:
+        raise ParseError(
+            "url_http_error",
+            f"{urlparse(url).hostname} returned HTTP {response.status_code}.",
+            422,
+        ) from exc
 
     chunks: list[bytes] = []
     size = 0
-    for chunk in response.iter_content(chunk_size=65536):
-        size += len(chunk)
-        if size > settings.max_url_bytes:
-            raise ParseError("url_too_large", "Page exceeds the size limit.", 413)
-        chunks.append(chunk)
+    try:
+        for chunk in response.iter_content(chunk_size=65536):
+            size += len(chunk)
+            if size > settings.max_url_bytes:
+                raise ParseError("url_too_large", "Page exceeds the size limit.", 413)
+            chunks.append(chunk)
+    except requests.exceptions.RequestException as exc:
+        raise ParseError(
+            "url_interrupted", "The download was interrupted before it finished.", 422
+        ) from exc
     body = b"".join(chunks)
     content_type = response.headers.get("content-type", "").lower()
 

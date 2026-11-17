@@ -115,6 +115,16 @@ async def create_analysis(
             documents.append(InputDocument(filename="pasted-text.txt", text=text))
     except ParseError as exc:
         raise _error(exc.status, exc.code, exc.message) from exc
+    except Exception as exc:  # noqa: BLE001 - never leak a traceback to the client
+        # Anything else here means a fetch/IO path failed in a way we did not anticipate.
+        # The log keeps the traceback; the client gets a message naming the input instead of
+        # "Something went wrong on the server", which tells them nothing and looks like a bug.
+        log.exception("input acquisition failed for %s", url or [d.filename for d in documents])
+        raise _error(
+            422,
+            "input_failed",
+            f"Could not read that input ({type(exc).__name__}). Try a file or pasted text.",
+        ) from exc
 
     options_dict = parsed_options.model_dump()
     with db.session() as session:

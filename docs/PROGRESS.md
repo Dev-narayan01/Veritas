@@ -25,6 +25,12 @@ build to audit.
 - [x] **A6 Honest unavailability reason** — the heavy modes name the missing component
   (`transformer: weights missing`) rather than their stacker; a stacker is useless without its
   inputs, so blaming it hides the real blocker. Regression-tested in `tests/test_api.py`.
+- [x] **A7 Every input path verified end to end** — PDF, DOCX, PPTX, Markdown, code and ZIP were
+  pushed through the live API and each returned `done` with the expected kind and word count.
+  OCR answers a clear `ocr_unavailable` because tesseract is not installed here. The URL path
+  originally escaped a network failure as an unhandled 500; every `requests` failure is now a
+  422 naming the cause (`url_tls_failed`, `url_timeout`, `url_unreachable`, `url_http_error`),
+  with an endpoint-level fallback so no input can ever produce a bare 500.
 - [x] **A5 Parser and security coverage** — `tests/test_parsers.py` (real PDF/DOCX/PPTX/TXT/code
   fixtures, ZIP traversal refusal, zip-bomb refusal, SSRF blocking, oversize page) and
   `tests/test_security.py` (upload cap, type refusal, error shape, limiter, path traversal on
@@ -71,7 +77,7 @@ build to audit.
 - [x] **F1** REPORT, LITERATURE, EXPLAINED, QUICKSTART, DEPLOY, HUMAN_STEPS, KAGGLE
 - [x] **F2** `scripts/smoke.sh`, `scripts/check_frontend.sh`, `scripts/finalize.sh`, test
   suites, manifest, this checklist
-- [x] **F3** Gates as of the final run: `pytest -q` **99 passed**, `vitest run` **57 passed**,
+- [x] **F3** Gates as of the final run: `pytest -q` **102 passed**, `vitest run` **57 passed**,
   `tsc --noEmit` clean, `npm run build` clean, `ruff` clean, `scripts/smoke.sh` all passed,
   `scripts/finalize.sh` **ALL GATES PASSED** (Playwright reported `SKIPPED`).
 

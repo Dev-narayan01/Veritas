@@ -2,13 +2,16 @@
 
 from __future__ import annotations
 
+import json
 import zipfile
 from pathlib import Path
+from typing import Any
 
 import pytest
 
 from app.parsers import archive, code, docx as docx_parser, pptx as pptx_parser, text as text_parser, url as url_parser
 from app.parsers.base import ParseError
+
 
 def write_test_pdf(path: Path, paragraphs: list[str]) -> None:
     """Build a small real PDF with ReportLab, so the parser is tested on actual PDF bytes."""
@@ -194,3 +197,71 @@ def test_binary_content_is_not_treated_as_text(tmp_path: Path) -> None:
     parsed = text_parser.parse(path)
     assert parsed.text is not None  # decoding never raises; it may warn instead
     assert isinstance(parsed.warnings, list)
+
+
+def test_network_failures_become_actionable_errors(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A blocked/slow/TLS-broken page must never surface as an unhandled 500.
+
+    Each of these is one user-visible experience ("that page could not be fetched"), so each is
+    mapped to a 422 that names the cause instead of escaping requests' exception zoo.
+    """
+    import requests
+
+    cases = [
+        (requests.exceptions.SSLError("tls eof"), "url_tls_failed"),
+        (requests.exceptions.ConnectTimeout("slow"), "url_timeout"),
+        (requests.exceptions.ConnectionError("no route"), "url_unreachable"),
+    ]
+    monkeypatch.setattr(url_parser, "validate_url", lambda url: url)
+    for error, expected_code in cases:
+
+        def boom(*_args, **_kwargs):
+            raise error
+
+        monkeypatch.setattr(url_parser.requests.Session, "get", boom)
+        with pytest.raises(ParseError) as excinfo:
+            url_parser.fetch_text("https://example.com/page")
+        assert excinfo.value.code == expected_code
+        assert excinfo.value.status == 422
+        assert "example.com" in excinfo.value.message
+
+
+def test_http_error_status_is_reported_with_the_code(monkeypatch: pytest.MonkeyPatch) -> None:
+    class NotFound:
+        status_code = 404
+        headers: dict[str, str] = {}
+        is_redirect = False
+
+        def raise_for_status(self) -> None:
+            raise url_parser.requests.exceptions.HTTPError("404")
+
+    monkeypatch.setattr(url_parser, "validate_url", lambda url: url)
+    monkeypatch.setattr(url_parser.requests.Session, "get", lambda *a, **k: NotFound())
+    with pytest.raises(ParseError) as excinfo:
+        url_parser.fetch_text("https://example.com/missing")
+    assert excinfo.value.code == "url_http_error"
+    assert "404" in excinfo.value.message
+
+
+def test_url_endpoint_returns_a_structured_error(client: Any) -> None:
+    """End to end: a URL the sandbox cannot reach must answer 422 with the error shape."""
+    # No `files` part at all: sending an empty filename trips FastAPI's own validation
+    # before the handler runs, which would test the framework rather than our error path.
+    response = client.post(
+        "/api/analyses",
+        data={
+            "url": "https://en.wikipedia.org/wiki/Library_catalog",
+            "options": json.dumps({"mode": "lite", "ai": True}),
+        },
+    )
+    assert response.status_code == 422, response.text
+    body = response.json()["detail"]["error"]
+    assert set(body) == {"code", "message"}
+    assert body["code"] in {
+        "url_unreachable",
+        "url_tls_failed",
+        "url_timeout",
+        "url_http_error",
+        "input_failed",
+        "unresolvable_url",
+    }
