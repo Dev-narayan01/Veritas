@@ -1,0 +1,7 @@
+# Ruff configuration for the Python functions.
+#
+# api/handlers/*.py are fragments: they reference names from the inlined core without
+# importing it, because scripts/build_api.py splices them into a single file. Linting
+# them on their own would report every such name as undefined.
+[tool.ruff.lint.per-file-ignores]
+"handlers/*.py" = ["F821"]
