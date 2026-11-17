@@ -80,14 +80,24 @@ root `vercel.json` therefore owns the build:
 | `installCommand` | `npm --prefix frontend ci` |
 | `buildCommand` | `npm --prefix frontend run build` |
 | `outputDirectory` | `frontend/dist` |
-| `functions` | `api/{health,samples,metrics}.py` 10 s / 512 MB, `api/analyze.py` 30 s / 1024 MB |
+| `functions` | `api/{health,samples,metrics}.py` 10 s, `api/analyze.py` 30 s |
+| `rewrites` | every non-`/api` path → `index.html` (SPA routing) |
+| `headers` | immutable caching for `/assets/*`, `nosniff`, referrer policy |
 
 `api/vercel.json` is now documentation only — nothing in it is honoured. `frontend/vercel.json`
-still rewrites every non-`/api` path to `index.html` (SPA routing) and caches hashed assets
-immutably.
+is *also* not read, because the build root is the repository root, so its SPA rewrite and
+asset headers were silently missing from the deployment; both now live in the root
+`vercel.json`.
 
-The deploy script stages the Lite artifacts into `frontend/public/artifacts/` (gitignored)
-before building, because `api/_lib/core.py` looks there first:
+`memory` is deliberately not set: Vercel ignores it on Active CPU billing and warns about it.
+
+The Lite model bundle is committed at **`api/artifacts/`** (`classical.pkl` +
+`thresholds.json` + `metrics.json` + `manifest.json`, 512 KB). This is not optional: Vercel
+packages the functions *before* any build step runs, and `frontend/public/artifacts/` is
+gitignored, so a git-based deploy ships no model at all and `/api/health` answers
+`"no lite artifact bundle is deployed with this build"`. `api/_lib/core.py` searches
+`api/artifacts`, then `artifacts/` beside the function, then the staging and training
+directories. `VERITAS_ARTIFACT_DIR` overrides the search entirely.
 
 ```bash
 vercel link --project prj_BaQtllto52VH7KYNU8zosZdEwFsm   # once, from the repo root
@@ -116,6 +126,39 @@ Environment variable in the Vercel project:
 functions must not import the `app` package; `api/_lib/core.py` installs a three-module
 pickle shim so `classical.pkl` loads without it.
 
+### How the Python functions are packaged
+
+Vercel's Python builder ships **one file per function** — the entrypoint and nothing else
+from this repository. Two deploys proved it the hard way:
+
+| symptom in the deployed function | cause |
+|---|---|
+| `ModuleNotFoundError: No module named '_lib'` | `from _lib.core import ...`, a sibling package |
+| `ModuleNotFoundError: No module named '_core'` | `from _core import ...`, a sibling module |
+
+Both builds reported READY; the failures only appeared on the first request. So the
+functions are generated:
+
+* `api/_lib/core.py` — the Lite core, the single source of truth, imported directly by tests
+* `api/handlers/<name>.py` — request handling only, no imports from this repository
+* `api/<name>.py` — **generated**: `python scripts/build_api.py` splices the two together
+
+Edit the sources, then run `scripts/build_api.py` and commit the result (a git deploy
+packages the repository before any build step, so the generated file must be in git).
+`tests/test_lite_deployment.py` rebuilds the functions and fails if they are stale, and
+asserts no function imports anything from this repository.
+
+Two more traps, both of which produce a green build and a broken runtime:
+
+* **Do not add `api/pyproject.toml`.** Vercel prefers it over `api/requirements.txt`, then
+  resolves from a generated `uv.lock` and installs nothing the functions need — the symptom
+  is `No module named 'joblib'` from a healthy-looking build. Lint configuration lives in
+  `ruff.toml`, which Vercel ignores. A test enforces this.
+* **Every function must be importable on its own.** `api/health.py` builds its payload
+  defensively so a broken bundle answers 200 with a `degraded` body naming the failure,
+  instead of an opaque `500 FUNCTION_INVOCATION_FAILED`. Read that body first when
+  debugging: `curl -s https://<project>.vercel.app/api/health | python3 -m json.tool`.
+
 ### What Lite can and cannot do
 
 | capability | full server | Lite |
@@ -141,7 +184,16 @@ never shown a disabled control without an explanation.
 ```bash
 BASE_URL=https://<user>-veritas-api.hf.space bash scripts/smoke.sh
 curl -s -o /dev/null -w '%{http_code}\n' https://<project>.vercel.app/results/nope   # 200 (SPA)
+# Lite on Vercel must report status=ok, artifact_source=cpu, classical=true:
+curl -s https://<project>.vercel.app/api/health | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d["status"], d["artifact_source"], d["models_loaded"]["classical"])'
+for p in health samples metrics; do curl -s -o /dev/null -w "$p %{http_code}\n" https://<project>.vercel.app/api/$p; done
+curl -s -X POST -H 'content-type: application/json' \
+  -d '{"text":"'"$(head -c 1500 ml/bundled/samples/sample_human.txt | tr -d '"\\')"'"}' \
+  https://<project>.vercel.app/api/analyze | head -c 200; echo
 ```
+
+A cold start can answer 500 on the very first request; retry once before treating it as a
+regression (the first `/api/health` after a deploy did exactly that here).
 
 Then, in the browser: toggle **Effects → Off** and confirm every page still works; disable
 WebGL (`chrome://flags` or the 2D fallback path) and confirm the heatmap, verdict number and
