@@ -277,3 +277,86 @@ def test_code_edges_do_not_duplicate_a_text_edge() -> None:
     before = len(result.edges)
     merged = batch.merge_code_edges(result, [CodeMatch(a="a", b="b", similarity=1.0)])
     assert len(merged.edges) == before, "a pair already drawn must not get a second edge"
+
+
+# --------------------------------------------------------------------------- #
+# Exclusions (spec §19: "client-side exclusion filters")
+# --------------------------------------------------------------------------- #
+
+
+def _quoted_document() -> tuple[str, str]:
+    quoted = '"' + (
+        "Library automation replaced paper catalogues with searchable records and readers "
+        "could find a book without walking to the shelf. "
+    ) + '"'
+    body = "My own analysis of library automation follows here. " * 8
+    return quoted, quoted + "\n\n" + body
+
+
+def _match_for(span: tuple[int, int], words: int = 20) -> PlagMatch:
+    return PlagMatch(
+        query_span=span,
+        source_span=(0, words),
+        query_text="",
+        source_text="",
+        source_id="src1",
+        source_title="A source",
+        match_type="exact",
+        score=1.0,
+        words=words,
+    )
+
+
+def test_quote_is_flagged_and_filtered_out_of_the_filtered_score() -> None:
+    quoted, text = _quoted_document()
+    sections = tag_sections(text)
+    assert [section.kind for section in sections] == ["quote"]
+
+    span = (0, len(quoted))
+    kept = merge.merge(
+        merge.MergeInput(text=text, matches=[_match_for(span)], sections=sections, corpus_size=3, warnings=[]),
+        exclusions={"quotes": False, "min_words": 8},
+    )
+    excluded = merge.merge(
+        merge.MergeInput(text=text, matches=[_match_for(span)], sections=sections, corpus_size=3, warnings=[]),
+        exclusions={"quotes": True, "min_words": 8},
+    )
+    assert kept.similarity_percent > 0
+    assert kept.similarity_percent_filtered == kept.similarity_percent
+    assert excluded.matches[0].in_quote is True
+    assert excluded.similarity_percent_filtered == 0.0, "an excluded quote must leave the filtered score"
+    # The unfiltered score is kept so the user can see what was excluded, not just a zero.
+    assert excluded.similarity_percent == kept.similarity_percent
+
+
+def test_bibliography_is_excluded_only_when_asked() -> None:
+    body = "A body paragraph that is entirely the author's own prose and contains no quotes. " * 4
+    bibliography = "\n\nReferences\n\nSmith, J. (2020). A study of catalogues. Journal of Libraries.\n"
+    text = body + bibliography
+    sections = tag_sections(text)
+    assert "bibliography" in [section.kind for section in sections]
+
+    start = len(body) + 2
+    span = (start, start + 40)
+    without = merge.merge(
+        merge.MergeInput(text=text, matches=[_match_for(span)], sections=sections, corpus_size=3, warnings=[]),
+        exclusions={"bibliography": False, "quotes": False, "min_words": 8},
+    )
+    with_exclusion = merge.merge(
+        merge.MergeInput(text=text, matches=[_match_for(span)], sections=sections, corpus_size=3, warnings=[]),
+        exclusions={"bibliography": True, "quotes": False, "min_words": 8},
+    )
+    assert without.similarity_percent_filtered > 0
+    assert with_exclusion.matches[0].in_bibliography is True
+    assert with_exclusion.similarity_percent_filtered == 0.0
+
+
+def test_min_words_drops_short_matches_from_the_filtered_score() -> None:
+    text = "Some ordinary prose that belongs to the author of this document entirely. " * 5
+    span = (0, 30)
+    result = merge.merge(
+        merge.MergeInput(text=text, matches=[_match_for(span, words=3)], sections=[], corpus_size=2, warnings=[]),
+        exclusions={"quotes": False, "bibliography": False, "min_words": 8},
+    )
+    assert result.similarity_percent > 0, "the raw score still counts a 3-word match"
+    assert result.similarity_percent_filtered == 0.0, "a 3-word match is below the 8-word floor"
