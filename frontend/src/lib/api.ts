@@ -59,6 +59,13 @@ export function setApiState(state: ApiBase): void {
   current = state
 }
 
+/** Base URL for links the browser navigates to directly (downloads, plot images).
+ * Uses the same resolution as the JSON calls, so a Lite or offline deployment does not
+ * build links against a host it never contacted. */
+export function apiUrl(path: string): string {
+  return `${current.base}${path}`
+}
+
 function url(path: string): string {
   return `${current.base}${path}`
 }

@@ -121,6 +121,7 @@ export function AnalyzePage() {
             ) : (
               <Badge>corpus: {ui.health?.corpus_size ?? 0} documents</Badge>
             )}
+            {!lite && (ui.health?.corpus_size ?? 0) === 0 && <Badge tone="bad">plagiarism corpus empty</Badge>}
             {!ui.health?.ocr && <Badge tone="warn">OCR unavailable</Badge>}
           </div>
         </div>

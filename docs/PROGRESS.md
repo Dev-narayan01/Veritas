@@ -18,13 +18,26 @@ build to audit.
   (≥ 100 unique scores); OOD-first Evaluation page; smoke banner; adoption script refuses
   smoke bundles. Covered by `tests/test_api.py`, `tests/test_detector.py`,
   `tests/test_lite_deployment.py` and `frontend/tests/unit/*`.
+- [x] **A4 Defect-4 regression coverage** — `tests/test_perturbations.py` asserts that each
+  attack changes ≥ 80 % of documents *and* changes them the right way (a shuffle must keep the
+  word multiset, homoglyphs must insert Cyrillic). A perturbation that silently stops working
+  now fails the build instead of producing a flattering robustness table.
+- [x] **A5 Parser and security coverage** — `tests/test_parsers.py` (real PDF/DOCX/PPTX/TXT/code
+  fixtures, ZIP traversal refusal, zip-bomb refusal, SSRF blocking, oversize page) and
+  `tests/test_security.py` (upload cap, type refusal, error shape, limiter, path traversal on
+  `/api/metrics/plots`).
 
 ## B — ML pipeline
 
 - [x] **B1** Data + group-disjoint splits + four OOD holdouts (`ml/prepare_data.py`)
 - [x] **B2** Training chain: classical, token statistics, zero-shot, stackers, Platt thresholds
 - [x] **B3** Evaluation chain: metrics + ablation, cross-generator, baseline, robustness, bias,
-  embedding projection — each writing its own JSON
+  embedding projection — each writing its own JSON. `evaluate.py` also emits confusion matrices
+  (abstentions counted separately), accuracy-by-length buckets and per-domain/generator/length
+  AUROC, plus `confusion_*.png` and `accuracy_by_length_*.png`.
+- [x] **B6** Adoption guard tests — `tests/test_artifacts_adoption.py` proves the Hub-adoption
+  script refuses smoke bundles, foreign products, missing outputs and missing thresholds, and
+  keeps a backup of replaced artifacts.
 - [x] **B4** Kaggle bundle, `docs/KAGGLE.md`, `docs/HUMAN_STEPS.md`, `ml/adopt_artifacts.py`
 - [x] **B5** CPU full-ish run for the live site: `ml/run_all.py --smoke --force` completes all
   17 steps in ~130 s and writes `dist/veritas_artifacts.zip`. A result-grade run is the user's
@@ -55,6 +68,9 @@ build to audit.
 - [x] **F1** REPORT, LITERATURE, EXPLAINED, QUICKSTART, DEPLOY, HUMAN_STEPS, KAGGLE
 - [x] **F2** `scripts/smoke.sh`, `scripts/check_frontend.sh`, `scripts/finalize.sh`, test
   suites, manifest, this checklist
+- [x] **F3** Gates as of the final run: `pytest -q` **98 passed**, `vitest run` **55 passed**,
+  `tsc --noEmit` clean, `npm run build` clean, `ruff` clean, `scripts/smoke.sh` all passed,
+  `scripts/finalize.sh` **ALL GATES PASSED** (Playwright reported `SKIPPED`).
 
 ## Known gaps (deliberate, documented)
 
@@ -65,3 +81,9 @@ build to audit.
   with reasons instead of showing invented numbers.
 - Pushing the Space, the Hub repo and the Vercel project needs credentials that only the owner
   has: `docs/HUMAN_STEPS.md` §1–4.
+- The 500+ word bucket in the length table holds 5 held-out documents. It is published with its
+  `n` because hiding it would look like cherry-picking, but no conclusion should be drawn from
+  it; the < 100-word drop (99 documents, AUROC 0.6661) is the one with enough data to matter.
+- Playwright is the only gate that cannot be executed here, so the e2e specs are unverified in
+  this environment. They are kept because they are the check that the 3D-off path keeps working
+  in a real browser.

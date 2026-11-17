@@ -6,7 +6,7 @@
 import { lazy, Suspense, useEffect, useState } from 'react'
 import { AlertTriangle } from 'lucide-react'
 import { Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
-import { api } from '../lib/api'
+import { api, apiUrl } from '../lib/api'
 import { percent, plainPercent } from '../lib/format'
 import type { MetricsResponse } from '../types'
 import { useGraphicsPreference, useGraphicsTier } from '../hooks/useGraphicsTier'
@@ -100,6 +100,8 @@ export function EvaluationPage() {
           </div>
         </Card>
       )}
+
+      <ConfusionAndLength data={data} />
 
       {data.cross_generator && (
         <Card title="Cross-generator transfer (leave-one-generator-out)">
@@ -242,7 +244,7 @@ export function EvaluationPage() {
             {data.plots.map((plot) => (
               <figure key={plot}>
                 <img
-                  src={`${apiBase()}${data.plots_base}/${plot}`}
+                  src={apiUrl(`${data.plots_base}/${plot}`)}
                   alt={`Evaluation plot ${plot.replace(/_/g, ' ').replace('.png', '')}`}
                   className="w-full rounded-lg border"
                   style={{ borderColor: 'var(--border)' }}
@@ -272,6 +274,125 @@ export function EvaluationPage() {
         </Callout>
       )}
     </div>
+  )
+}
+
+/** Confusion matrices and accuracy-by-length, straight from `metrics.json`.
+ * The matrix counts *reported verdicts*, so abstentions appear as their own cells rather
+ * than being folded into "correct". */
+function ConfusionAndLength({ data }: { data: MetricsResponse }) {
+  const splits = (((data.metrics ?? {}) as Record<string, any>).splits ?? {}) as Record<string, any>
+  const rows: Array<{ split: string; mode: string; confusion: Record<string, number>; byLength: Record<string, { n: number; accuracy: number }> }> = []
+  for (const [splitName, split] of Object.entries(splits)) {
+    for (const [mode, entry] of Object.entries((split?.modes ?? {}) as Record<string, any>)) {
+      if (entry?.confusion) {
+        rows.push({ split: splitName, mode, confusion: entry.confusion, byLength: entry.accuracy_by_length ?? {} })
+      }
+    }
+  }
+  if (rows.length === 0) return null
+  const buckets = ['<100', '100-250', '250-500', '500+']
+  return (
+    <Card title="Confusion matrices and accuracy by length">
+      <p className="muted mb-2 text-xs">
+        Counts of the verdicts the system actually reported at the tuned thresholds.
+        Abstentions are counted as "not AI", which is why the false-negative cell is larger than
+        the false-positive cell — that asymmetry is the 1% false-positive target working.
+      </p>
+      <div className="grid gap-3 md:grid-cols-2">
+        {rows.map((row) => {
+          const c = row.confusion
+          const cells: Array<[string, number, string]> = [
+            ['true negative', c.human_true_negative ?? 0, 'var(--human)'],
+            ['false positive', c.human_false_positive ?? 0, 'var(--ai)'],
+            ['false negative', c.ai_false_negative ?? 0, 'var(--uncertain)'],
+            ['true positive', c.ai_true_positive ?? 0, 'var(--human)'],
+          ]
+          const total = cells.reduce((sum, [, value]) => sum + value, 0) || 1
+          return (
+            <div key={`${row.split}-${row.mode}`} className="card-2 p-2">
+              <p className="panel-title mb-1">
+                {row.mode} · {row.split === 'test_ood' ? 'held-out' : 'in-domain'} · n={total}
+              </p>
+              <div className="grid grid-cols-2 gap-1 text-center text-xs">
+                {cells.map(([label, value, color]) => (
+                  <div key={label} className="rounded p-1" style={{ backgroundColor: 'var(--surface)' }}>
+                    <p className="font-mono text-base" style={{ color }}>
+                      {value}
+                    </p>
+                    <p className="muted">{label}</p>
+                  </div>
+                ))}
+              </div>
+              <p className="muted mt-1 text-[11px]">
+                abstained: AI texts {c.ai_abstained ?? 0} · human texts {c.human_abstained ?? 0}
+              </p>
+              <table className="mt-2 w-full text-[11px]">
+                <caption className="sr-only">Accuracy by document length</caption>
+                <thead>
+                  <tr>
+                    {buckets.map((bucket) => (
+                      <th key={bucket} className="muted p-0.5 text-left font-normal">
+                        {bucket}
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr>
+                    {buckets.map((bucket) => {
+                      const entry = row.byLength[bucket]
+                      return (
+                        <td key={bucket} className="p-0.5 font-mono">
+                          {entry ? entry.accuracy.toFixed(2) : '—'}
+                          {entry && <span className="muted"> (n={entry.n})</span>}
+                        </td>
+                      )
+                    })}
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          )
+        })}
+      </div>
+      <BreakdownTable rows={rows} splits={splits} />
+    </Card>
+  )
+}
+
+function BreakdownTable({ rows, splits }: { rows: Array<{ split: string; mode: string }>; splits: Record<string, any> }) {
+  const entries = rows
+    .map((row) => ({ ...row, breakdown: splits[row.split]?.modes?.[row.mode]?.breakdown }))
+    .filter((row) => row.breakdown)
+  if (entries.length === 0) return null
+  return (
+    <details className="mt-3 text-xs">
+      <summary className="cursor-pointer">Per-domain, per-generator and per-length ROC-AUC</summary>
+      <div className="mt-2 space-y-2">
+        {entries.map((row) => (
+          <div key={`${row.split}-${row.mode}`}>
+            <p className="panel-title">
+              {row.mode} · {row.split === 'test_ood' ? 'held-out' : 'in-domain'}
+            </p>
+            {(['domain', 'generator', 'length_bucket'] as const).map((key) => {
+              const block = row.breakdown?.[key]
+              if (!block || Object.keys(block).length === 0) return null
+              return (
+                <p key={key} className="muted">
+                  {key.replace('_', ' ')}:{' '}
+                  {Object.entries(block)
+                    .map(([name, entry]: [string, any]) =>
+                      `${name} ${entry.roc_auc !== undefined ? entry.roc_auc.toFixed(3) : '—'} (n=${entry.n})`,
+                    )
+                    .join(' · ')}
+                </p>
+              )
+            })}
+          </div>
+        ))}
+      </div>
+    </details>
   )
 }
 
@@ -368,8 +489,4 @@ function CIChart({ label, value, ci }: { label: string; value: number; ci: [numb
       </div>
     </div>
   )
-}
-
-function apiBase(): string {
-  return (import.meta.env.VITE_API_BASE_URL as string | undefined)?.replace(/\/$/, '') ?? ''
 }

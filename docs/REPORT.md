@@ -29,7 +29,51 @@ A three-part system:
   Three Fiber scenes and 2D/Off fallbacks, plus a Vercel Lite deployment (`api/`) that scores
   pasted text and states exactly what it cannot do.
 
-## 2. Datasets
+## 2. Architecture
+
+```mermaid
+flowchart TB
+    subgraph Browser["Vercel · React SPA"]
+        A["Analyze"] --> B["Results"]
+        B --> C["History"]
+        B --> D["Evaluation"]
+        E["About"]
+        G["Graphics tier<br/>high · low · off"]
+    end
+
+    subgraph Space["Hugging Face Space · FastAPI"]
+        H["/api/health"] --> H2["mode availability<br/>+ reasons"]
+        I["POST /api/analyses"]
+        I --> J["parse<br/>PDF DOCX PPTX TXT OCR URL ZIP code"]
+        J --> K["integrity<br/>invisibles · homoglyphs · hidden PDF"]
+        K --> L["normalise<br/>+ offset map"]
+        L --> M["detector<br/>classical · ppl · zero-shot · stacker · Platt"]
+        L --> N["plagiarism<br/>LSH · alignment · paraphrase · exclusions"]
+        M --> O["report<br/>PDF · JSON · CSV"]
+        N --> O
+        M --> P["SSE progress"]
+    end
+
+    subgraph Hub["HF Hub · artifacts"]
+        Q["manifest · models · thresholds<br/>metrics · corpus index"]
+    end
+
+    subgraph ML["ml/ pipeline (CPU or Kaggle)"]
+        R["prepare_data"] --> S["train_*"] --> T["tune_thresholds"] --> U["evaluate · robustness · bias<br/>plagiarism benchmark"] --> Q
+    end
+
+    subgraph Lite["Vercel · api/ Lite functions"]
+        V["pasted text · classical only<br/>states its limits"]
+    end
+
+    A -->|wake-up probe 90 s| H
+    A -->|fallback| V
+    I --> Q
+    D -->|reads| Q
+    Browser -->|downloads| O
+```
+
+## 3. Datasets
 
 | dataset | role | size in this snapshot |
 |---|---|---|
@@ -48,7 +92,7 @@ Datasheet-style notes: no licensed or paywalled text is included; the bundled sa
 written for this project; no personal data is collected; the only outbound traffic is the
 opt-in online source check.
 
-## 3. Detector
+## 4. Detector
 
 ### Modes and components
 
@@ -98,6 +142,35 @@ Held-out first, because that is the honest headline.
 | classical | 0.9752 | 0.9613–0.9860 | 0.772 | 0.9136 | — |
 | ppl_gpt2 | 0.9206 | 0.8943–0.9420 | 0.584 | 0.6947 | — |
 
+### What the verdicts actually look like
+
+The confusion matrices below count **reported verdicts** at the tuned thresholds, with
+abstentions kept in their own cells rather than folded into either side. Source:
+`ml/artifacts/metrics.json → splits.<split>.modes.<mode>.confusion`.
+
+| split | mode | true neg | false pos | false neg | true pos | abstained (human / AI) |
+|---|---|---|---|---|---|---|
+| `test` | lite | 249 | 1 | 71 | 179 | 34 / 60 |
+| `test_ood` | lite | 199 | 51 | 45 | 205 | 148 / 42 |
+
+The asymmetry is deliberate: at a 1% false-positive target the system misses more AI text than
+it accuses of human text, which is the right way round for a tool that must never be the only
+reason a student is accused of something.
+
+Accuracy by length shows why short documents are the hard case
+(`splits.test_ood.modes.lite.accuracy_by_length`):
+
+| length bucket | in-domain accuracy | held-out accuracy |
+|---|---|---|
+| < 100 words | 0.9133 (n=196) | 0.6263 (n=99) |
+| 100–250 | 0.9268 (n=246) | 0.7139 (n=339) |
+| 250–500 | 0.9216 (n=51) | 0.3860 (n=57) |
+| 500+ | 0.8571 (n=7) | 0.2000 (n=5) |
+
+The 500+ bucket has five documents and must not be read as a trend — it is shown with its `n`
+for exactly that reason. The < 100-word held-out drop is real and consistent with the
+threshold-free ROC-AUC breakdown (`<100` bucket AUROC 0.6661 against 0.8783 for 100–250 words).
+
 Two things to read honestly here:
 
 * the in-domain/in-the-wild gap (ROC-AUC 0.98 → 0.89, TPR@1% 0.76 → 0.43) **is the finding**;
@@ -114,7 +187,7 @@ a reader rather than buried.
 Hardware note: with `torch` available the same code path loads GPT-2 small, RoBERTa,
 Binoculars and Fast-DetectGPT. Everything above was produced without them.
 
-## 4. Robustness
+## 5. Robustness
 
 Recall at each mode's own tuned threshold, with **`changed_fraction`** so a perturbation that
 did nothing cannot be sold as robustness. `lite`, baseline recall 0.700:
@@ -138,7 +211,7 @@ to the clean baseline of 0.700), which is exactly what that stage exists for.
 `paraphrase attack skipped: No module named 'torch'` — the T5 paraphrase attack needs a model;
 it is listed as skipped in `robustness.json` rather than silently omitted.
 
-## 5. Bias
+## 6. Bias
 
 Proxy definition (disclosed in `bias.json` and on the page): human test texts simplified to the
 3,000 most frequent corpus words, with long sentences split at common connectors. This is a
@@ -154,7 +227,7 @@ the difference excludes zero.** With 250 texts per side this interval is wide, s
 here means "no detectable difference at this sample size", not "bias ruled out". A real ESL
 corpus is listed as future work.
 
-## 6. Plagiarism
+## 7. Plagiarism
 
 Synthetic benchmark with known inserted spans — **labelled synthetic everywhere it appears**,
 because a synthetic F1 is not a real-world rate. Test half only (the thresholds were tuned on
@@ -179,7 +252,7 @@ finds *where* the copied spans are much better than it estimates *how much* of t
 copied, so the percentage should be read as a lower bound with wide error. This is stated in
 the UI next to the number.
 
-## 7. Cross-generator and baseline
+## 8. Cross-generator and baseline
 
 * `cross_generator.json`: **empty and explained** — the available data has a single AI
   generator family (`chatgpt`), so leave-one-generator-out would leave no AI training data.
@@ -188,7 +261,7 @@ the UI next to the number.
   checkpoint (`Hello-SimpleAI/chatgpt-detector-roberta`) could not be downloaded here. The
   Evaluation page renders "not reported, and why" instead of a placeholder.
 
-## 8. Interface
+## 9. Interface
 
 * Routes: Analyze, Results, History, Evaluation (OOD first), About, 404.
 * Graphics tiers `high` / `low` / `off` with automatic detection (WebGL2, reduced motion, cores,
@@ -199,18 +272,18 @@ the UI next to the number.
 * Document text is never uploaded to a GPU texture; scenes use procedural geometry only; no
   remote 3D assets; at most one canvas per page; rendering pauses off-screen and in hidden tabs.
 
-## 9. Verification
+## 10. Verification
 
 | gate | result |
 |---|---|
-| `pytest -q` | 63 passed (API contract, text pipeline, detector, plagiarism, Lite functions, naming/no-placeholder gate) |
-| `vitest run` | 50 passed (span maths, tier decision, API-base resolution, formatting, Viewer, page-level render tests) |
+| `pytest -q` | 98 passed (API contract, text pipeline, detector, plagiarism, Lite functions, naming/no-placeholder gate) |
+| `vitest run` | 55 passed (span maths, tier decision, API-base resolution, formatting, Viewer, page-level render tests) |
 | `npm run build` | passes (TypeScript strict, three.js in its own lazy chunk) |
 | `scripts/smoke.sh` | passes against a live server: health, version, samples, metrics, analysis, exports, history, retain=false, delete, corpus stats |
 | `ruff check backend ml api tests` | clean |
 | Playwright smoke | **not run in the build sandbox** — `cdn.playwright.dev` is unreachable, so `npx playwright install chromium` fails. `scripts/check_frontend.sh` prints `SKIPPED` for this stage. `docs/HUMAN_STEPS.md` §6 has the commands |
 
-## 10. Limitations
+## 11. Limitations
 
 1. **No GPU components ran in this snapshot.** `standard` and `deep` are untested against real
    Binoculars / Fast-DetectGPT behaviour; they are reported unavailable, which is correct but
@@ -226,7 +299,7 @@ the UI next to the number.
    structure-changing attacks that were measured do work.
 7. **The interval shown with each probability is a heuristic**, not a formal posterior.
 
-## 11. Ethics
+## 12. Ethics
 
 Detection is used to *inform* a reader, never to accuse. The UI states this on every result, the
 PDF report repeats it, and the API returns it in `disclaimer`. Documents are deleted as soon as
@@ -235,7 +308,7 @@ lists exactly which sentences it sent. Formal and non-native writing is where fa
 concentrate, which is why the bias check is published with its interval instead of being
 summarised as "fair".
 
-## 12. Reproducing this document
+## 13. Reproducing this document
 
 ```bash
 python3 -m venv .venv && .venv/bin/pip install -r backend/requirements-dev.txt
@@ -246,3 +319,21 @@ cat ml/artifacts/metrics.json | python3 -m json.tool
 
 Then re-read the tables above against the JSON. Any mismatch means this document is stale and
 should be regenerated from the artifacts, not edited by hand.
+
+### Figures
+
+Every figure is produced by `ml/evaluate.py` from the same run as the tables, and served by the
+API under `/api/metrics/plots/<name>`. The Evaluation page renders them; none are hand-drawn.
+
+| file | what it shows |
+|---|---|
+| `roc_test.png` / `roc_test_ood.png` | ROC curves per mode and per component, both splits |
+| `pr_test.png` / `pr_test_ood.png` | precision-recall, the honest view under class imbalance |
+| `calibration_test*.png` | reliability diagrams before and after Platt scaling |
+| `distributions_test*.png` | score distributions for human and AI texts, with the two thresholds |
+| `confusion_test*.png` | the matrices in the table above, as counts |
+| `accuracy_by_length_test*.png` | the length table above, as a line per mode |
+| `split_lengths.png` | document-length distribution per split, to expose the length confound |
+
+`scripts/finalize.sh` checks that each of these exists and is newer than the manifest, so a
+stale figure cannot be shipped as if it described the current model.

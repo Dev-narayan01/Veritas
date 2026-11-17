@@ -104,7 +104,31 @@ export const metrics = {
     splits: {
       test_ood: {
         label: 'held-out (out of domain)',
-        modes: { lite: { roc_auc: 0.888, pr_auc: 0.9, tpr_at_1pct_fpr: 0.43, f1: 0.8, ece: 0.29, roc_auc_ci: [0.86, 0.91], human_fpr_at_t_ai: 0.2, abstention_rate: 0.1 } },
+        modes: {
+          lite: {
+            roc_auc: 0.888,
+            pr_auc: 0.9,
+            tpr_at_1pct_fpr: 0.43,
+            f1: 0.8,
+            ece: 0.29,
+            roc_auc_ci: [0.86, 0.91],
+            human_fpr_at_t_ai: 0.2,
+            abstention_rate: 0.1,
+            confusion: {
+              ai_true_positive: 180,
+              ai_false_negative: 20,
+              human_false_positive: 4,
+              human_true_negative: 196,
+              ai_abstained: 30,
+              human_abstained: 12,
+            },
+            accuracy_by_length: { '<100': { n: 40, accuracy: 0.8 }, '100-250': { n: 120, accuracy: 0.9 } },
+            breakdown: {
+              domain: { reddit: { n: 100, roc_auc: 0.9 } },
+              length_bucket: { '<100': { n: 40, roc_auc: 0.84 } },
+            },
+          },
+        },
         components: { classical: { roc_auc: 0.86, roc_auc_ci: [0.83, 0.89], ece: 0.2 } },
       },
       test: {

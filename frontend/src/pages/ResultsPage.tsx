@@ -6,7 +6,7 @@ import { Link, useParams } from 'react-router-dom'
 import { Download, FileJson, FileText, Trash2 } from 'lucide-react'
 import { Bar, BarChart, Cell, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
 import { toast } from 'sonner'
-import { api, verdictColor, verdictLabel } from '../lib/api'
+import { api, apiUrl, verdictColor, verdictLabel } from '../lib/api'
 import { filterMatches, sourceColor } from '../lib/spans'
 import { percent, plainPercent, relativeDate, truncate } from '../lib/format'
 import type { AnalysisResult, DocumentResult, PlagMatch } from '../types'
@@ -93,13 +93,13 @@ export function ResultsPage() {
           {ai && <Badge tone={ai.verdict === 'likely_ai' ? 'bad' : ai.verdict === 'likely_human' ? 'good' : 'warn'}>{verdictLabel(ai.verdict)}</Badge>}
           {ai?.probability !== null && ai && <Badge>P(AI) {percent(ai.probability)}</Badge>}
           {plagiarism && <Badge tone="info">similarity {plainPercent(plagiarism.similarity_percent)}</Badge>}
-          <a className="btn !px-2 !py-1 text-xs" href={`${apiBase()}${`/api/analyses/${id}/report.pdf`}`} target="_blank" rel="noreferrer">
+          <a className="btn !px-2 !py-1 text-xs" href={apiUrl(`/api/analyses/${id}/report.pdf`)} target="_blank" rel="noreferrer">
             <Download size={13} aria-hidden="true" /> PDF
           </a>
-          <a className="btn !px-2 !py-1 text-xs" href={`${apiBase()}${`/api/analyses/${id}/export.json`}`}>
+          <a className="btn !px-2 !py-1 text-xs" href={apiUrl(`/api/analyses/${id}/export.json`)}>
             <FileJson size={13} aria-hidden="true" /> JSON
           </a>
-          <a className="btn !px-2 !py-1 text-xs" href={`${apiBase()}${`/api/analyses/${id}/export.csv`}`}>
+          <a className="btn !px-2 !py-1 text-xs" href={apiUrl(`/api/analyses/${id}/export.csv`)}>
             <FileText size={13} aria-hidden="true" /> CSV
           </a>
           <button
@@ -441,9 +441,4 @@ function BatchSection({ result, tier }: { result: AnalysisResult; tier: 'high' |
       )}
     </div>
   )
-}
-
-function apiBase(): string {
-  const configured = (import.meta.env.VITE_API_BASE_URL as string | undefined)?.replace(/\/$/, '')
-  return configured ?? ''
 }

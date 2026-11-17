@@ -5,7 +5,7 @@ import { useMemo } from 'react'
 import { OrbitControls } from '@react-three/drei'
 import * as THREE from 'three'
 import { ScatterChart, Scatter, XAxis, YAxis, Tooltip, ResponsiveContainer } from 'recharts'
-import { BUDGETS, type GraphicsTier } from '../../lib/graphics'
+import { type GraphicsTier } from '../../lib/graphics'
 import { CanvasShell } from './CanvasShell'
 
 export interface Projection {
@@ -51,7 +51,6 @@ function Points({ data, limit }: { data: Projection; limit: number }) {
 }
 
 export function EmbeddingSpace({ tier, data }: { tier: GraphicsTier; data: Projection }) {
-  const budget = BUDGETS[tier]
   const limit = tier === 'low' ? 800 : 3000
   return (
     <div>
@@ -64,7 +63,7 @@ export function EmbeddingSpace({ tier, data }: { tier: GraphicsTier; data: Proje
       >
         <ambientLight intensity={1} />
         <OrbitControls enablePan={false} enableDamping />
-        <Points data={data} limit={budget.sheets === 0 ? limit : limit} />
+        <Points data={data} limit={tier === 'low' ? 800 : 3000} />
       </CanvasShell>
       <p className="muted mt-2 text-xs">
         {data.caption} · projection: {data.method.toUpperCase()} · green = human, red = AI

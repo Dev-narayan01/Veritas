@@ -99,6 +99,13 @@ describe('Evaluation page', () => {
     expect(screen.getByText('40%')).toBeTruthy()
   })
 
+  it('shows the confusion matrix with abstentions counted separately', async () => {
+    mount('/evaluation')
+    expect(await screen.findByText('Confusion matrices and accuracy by length')).toBeTruthy()
+    expect(screen.getByText('false positive')).toBeTruthy()
+    expect(screen.getByText(/abstained: AI texts 30/)).toBeTruthy()
+  })
+
   it('does not show a smoke warning for a non-smoke run', async () => {
     mount('/evaluation')
     await screen.findByText(/Held-out/)

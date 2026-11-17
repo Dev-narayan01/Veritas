@@ -45,6 +45,14 @@ STEP_OUTPUTS = {
 }
 
 
+def _display(path: Path) -> str:
+    """Path relative to the repo when possible, absolute otherwise (tests use temp dirs)."""
+    try:
+        return str(path.relative_to(REPO_ROOT))
+    except ValueError:
+        return str(path)
+
+
 def extract(archive: Path, target: Path) -> Path:
     """Extract, tolerating a bundle zipped with or without its top folder."""
     with zipfile.ZipFile(archive) as zf:
@@ -101,12 +109,12 @@ def adopt(directory: Path, keep_previous: bool) -> None:
                 if destination.is_dir():
                     shutil.rmtree(destination)
                 shutil.move(str(item), destination)
-            print(f"previous artifacts moved to {BACKUP_DIR.relative_to(REPO_ROOT)}")
+            print(f"previous artifacts moved to {_display(BACKUP_DIR)}")
         else:
             shutil.rmtree(BACKUP_DIR, ignore_errors=True)
             shutil.move(str(ARTIFACT_DIR), str(BACKUP_DIR))
             ARTIFACT_DIR.mkdir()
-            print(f"previous artifacts moved to {BACKUP_DIR.relative_to(REPO_ROOT)} (pass --keep to merge instead)")
+            print(f"previous artifacts moved to {_display(BACKUP_DIR)} (pass --keep to merge instead)")
     for item in directory.iterdir():
         destination = ARTIFACT_DIR / item.name
         if item.is_dir():

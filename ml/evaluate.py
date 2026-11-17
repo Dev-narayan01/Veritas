@@ -141,8 +141,45 @@ def _threshold_metrics(
     }
 
 
+def _confusion(scores: np.ndarray, labels: np.ndarray, thresholds: ModeThresholds,
+               words: np.ndarray) -> dict[str, int]:
+    """2x2 confusion matrix of the *reported verdicts*, uncertain included.
+
+    ``positive`` means "the system said likely_ai". Counting abstentions separately is the
+    point: a detector that abstains on the hard cases is different from one that guesses.
+    """
+    verdicts = []
+    for score, count in zip(scores, words):
+        t_human, t_ai = thresholds.for_length(int(count))
+        verdicts.append("ai" if score >= t_ai else "human" if score <= t_human else "uncertain")
+    verdicts_arr = np.asarray(verdicts)
+    humans, ai = labels == 0, labels == 1
+    return {
+        "ai_true_positive": int(np.sum(verdicts_arr[ai] == "ai")),
+        "ai_false_negative": int(np.sum(verdicts_arr[ai] != "ai")),
+        "human_false_positive": int(np.sum(verdicts_arr[humans] == "ai")),
+        "human_true_negative": int(np.sum(verdicts_arr[humans] != "ai")),
+        "ai_abstained": int(np.sum(verdicts_arr[ai] == "uncertain")),
+        "human_abstained": int(np.sum(verdicts_arr[humans] == "uncertain")),
+    }
+
+
+def _accuracy_by_length(scores: np.ndarray, labels: np.ndarray, words: np.ndarray) -> dict[str, dict]:
+    """Accuracy at a fixed 0.5 cut-off inside each length bucket, with n."""
+    buckets: dict[str, dict] = {}
+    for bucket in ("<100", "100-250", "250-500", "500+"):
+        mask = np.asarray([length_bucket(int(word)) == bucket for word in words])
+        if not mask.any():
+            continue
+        predicted = (scores[mask] >= 0.5).astype(int)
+        buckets[bucket] = {
+            "n": int(mask.sum()),
+            "accuracy": round(float(np.mean(predicted == labels[mask])), 4),
+        }
+    return buckets
+
 def _breakdowns(frame: pd.DataFrame, ids: list[str], scores: np.ndarray, labels: np.ndarray) -> dict:
-    """Per-domain / generator / length bucket AUROC and n."""
+    """Per-domain / generator / length-bucket AUROC and n (AUROC is threshold-free)."""
     from sklearn.metrics import roc_auc_score
 
     selected = frame.set_index("id").loc[ids].reset_index()
@@ -154,11 +191,11 @@ def _breakdowns(frame: pd.DataFrame, ids: list[str], scores: np.ndarray, labels:
         block: dict[str, dict] = {}
         for value, group in selected.groupby(column):
             entry: dict[str, float | int] = {"n": int(len(group))}
+            # No per-domain FPR here: it would need the tuned threshold, and a 0.5 cut-off
+            # would report a second, contradictory false-positive rate. The confusion
+            # matrix already gives the FPR at the threshold the system actually uses.
             if group["label"].nunique() > 1:
                 entry["roc_auc"] = round(float(roc_auc_score(group["label"], group["score"])), 4)
-                entry["human_fpr"] = round(
-                    float(np.mean(group.loc[group["label"] == 0, "score"] >= 0.5)), 4
-                )
             block[str(value)] = entry
         output[column] = block
     buckets: dict[str, dict] = {}
@@ -236,7 +273,90 @@ def _plots(component_scores: dict[str, dict], mode_scores: dict[str, dict], spli
         fig.savefig(path)
         plt.close(fig)
         written.append(path.name)
-    return written
+
+    written.append(_confusion_plot(mode_scores, split))
+    written.append(_length_plot(mode_scores, split))
+    return [name for name in written if name]
+
+
+def _confusion_plot(mode_scores: dict[str, dict], split: str) -> str:
+    """Confusion matrix of the reported verdicts for the headline mode, as counts.
+
+    Cells are annotated with raw counts, so the figure cannot be read as a rate without the
+    denominator being visible in the same image.
+    """
+    try:
+        import matplotlib
+
+        matplotlib.use("Agg")
+        import matplotlib.pyplot as plt
+    except Exception as exc:  # noqa: BLE001 - plotting is optional
+        log.warning("confusion plot skipped: %s", exc)
+        return ""
+    candidates = [m for m in ("deep", "standard", "fast", "lite") if m in mode_scores]
+    if not candidates:
+        return ""
+    mode = candidates[0]
+    matrix = (mode_scores[mode]["metrics"] or {}).get("confusion")
+    if not matrix:
+        return ""
+    grid = np.array(
+        [
+            [matrix["human_true_negative"], matrix["human_false_positive"]],
+            [matrix["ai_false_negative"], matrix["ai_true_positive"]],
+        ],
+        dtype=float,
+    )
+    fig, ax = plt.subplots(figsize=(3.6, 3.0), dpi=130)
+    ax.imshow(grid, cmap="Blues")
+    for row in range(2):
+        for col in range(2):
+            ax.text(col, row, f"{int(grid[row, col])}", ha="center", va="center",
+                    fontsize=11, color="black")
+    ax.set_xticks([0, 1], ["verdict human", "verdict AI"])
+    ax.set_yticks([0, 1], ["truly human", "truly AI"])
+    ax.set_title(f"Confusion — {mode} on {split}\n(abstentions counted as not-AI)", fontsize=8)
+    fig.tight_layout()
+    path = PLOTS_DIR / f"confusion_{split}.png"
+    fig.savefig(path)
+    plt.close(fig)
+    return path.name
+
+
+def _length_plot(mode_scores: dict[str, dict], split: str) -> str:
+    """Accuracy by document length for every mode that produced it."""
+    try:
+        import matplotlib
+
+        matplotlib.use("Agg")
+        import matplotlib.pyplot as plt
+    except Exception as exc:  # noqa: BLE001 - plotting is optional
+        log.warning("length plot skipped: %s", exc)
+        return ""
+    buckets = ["<100", "100-250", "250-500", "500+"]
+    plotted = False
+    fig, ax = plt.subplots(figsize=(4.6, 3.0), dpi=130)
+    for mode, payload in mode_scores.items():
+        table = (payload["metrics"] or {}).get("accuracy_by_length") or {}
+        xs = [bucket for bucket in buckets if bucket in table]
+        if not xs:
+            continue
+        ax.plot(xs, [table[b]["accuracy"] for b in xs], marker="o", linewidth=1.2,
+                label=f"{mode} (n={sum(table[b]['n'] for b in xs)})")
+        plotted = True
+    if not plotted:
+        plt.close(fig)
+        return ""
+    ax.set_ylim(0, 1.05)
+    ax.set_xlabel("document length (words)")
+    ax.set_ylabel("accuracy at 0.5")
+    ax.set_title(f"Accuracy by length — {split}")
+    ax.legend(fontsize=6)
+    fig.tight_layout()
+    path = PLOTS_DIR / f"accuracy_by_length_{split}.png"
+    fig.savefig(path)
+    plt.close(fig)
+    return path.name
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -310,6 +430,8 @@ def main(argv: list[str] | None = None) -> int:
                     metrics["latency_ms_per_1k_texts"] = round(latency * 1000, 2)
                     metrics["components"] = list(MODE_COMPONENTS[mode])
                     metrics["breakdown"] = _breakdowns(frame, ids, scores, labels)
+                    metrics["confusion"] = _confusion(scores, labels, mode_thresholds, words)
+                    metrics["accuracy_by_length"] = _accuracy_by_length(scores, labels, words)
                 mode_scores[mode] = {
                     "metrics": metrics, "labels": labels, "scores": scores,
                 }
