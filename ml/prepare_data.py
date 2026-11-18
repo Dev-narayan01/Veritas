@@ -23,7 +23,6 @@ import argparse
 import csv
 import json
 import random
-import re
 import subprocess
 import sys
 import urllib.request
@@ -52,6 +51,9 @@ from app.integrity.invisible import scan as scan_invisible  # noqa: E402
 MIN_WORDS = 30
 MAX_PER_SOURCE_LABEL = 12_000
 OOD_DOMAIN = "wiki_csai"
+# Legacy name: arXiv rows are now tagged per field (arxiv_ai / arxiv_cv /
+# arxiv_lg) so one whole field can be held out. Kept for callers that still
+# refer to the old single-source name.
 OOD_FORMAL_SOURCE = "arxiv_abstract"
 GITHUB_MIRRORS = {
     "hc3": "https://codeload.github.com/fangedvampire/ai_against_ai/tar.gz/refs/heads/main",
@@ -186,18 +188,48 @@ def load_hc3(per_domain_label: int = 4000) -> list[Record]:
     return records
 
 
-def load_arxiv(cap: int = 6000) -> list[Record]:
-    """Formal human negatives: arXiv abstracts (never in train/val/test).
+# Topics in the arXiv mirror. The three large ones are disjoint fields, which makes
+# them useful as an unseen-topic holdout rather than a random split: "seen domain,
+# unseen documents" flatters a model that has only learned one field's diction.
+ARXIV_TOPICS = {
+    "artificial intelligence": "arxiv_ai",
+    "computer vision": "arxiv_cv",
+    "language generation": "arxiv_lg",
+}
+
+
+def _arxiv_topic_of(path: Path) -> str:
+    """'computer vision_14582_15000_15_abs.txt' -> 'arxiv_cv'."""
+    stem = path.stem
+    for prefix in ARXIV_TOPICS:
+        if stem.startswith(prefix):
+            return ARXIV_TOPICS[prefix]
+    return "arxiv_other"
+
+
+def load_arxiv(cap: int = 6000, per_topic_cap: int = 0) -> list[Record]:
+    """Formal human negatives: arXiv abstracts, tagged by field.
 
     The GitHub mirror stores one abstract per line, so the file is split *before*
-    normalisation (which collapses newlines).  Each abstract gets its own group id
-    so the splitter keeps them apart.
+    normalisation (which collapses newlines). Each abstract gets its own group id so
+    the splitter keeps them apart.
+
+    Every topic file is read, not just the first: the mirror holds artificial
+    intelligence (~10k rows), computer vision (~14.5k) and language generation
+    (~14.5k). Stopping at the first topic is why every arXiv row shared a single
+    field, which made the OOD split a *document* holdout inside one topic.
+
+    ``per_topic_cap`` caps each topic equally; without it the first topic fills
+    ``cap`` and the others are never reached.
     """
     records: list[Record] = []
     archive = _download(GITHUB_MIRRORS["arxiv"], "arxiv")
     if archive is not None:
-        for path in sorted(archive.rglob("*_abs.txt")):
-            topic = re.sub(r"[^a-z]+", "_", path.stem.split("_")[0]).strip("_")[:40] or "arxiv"
+        # Two passes: count what each topic needs so every topic gets a fair share.
+        paths = sorted(archive.rglob("*_abs.txt"))
+        per_topic = per_topic_cap or (cap // max(1, len(paths)))
+        for path in paths:
+            topic = _arxiv_topic_of(path)
             raw = path.read_text(errors="replace")
             kept = 0
             for line in raw.split("\n"):
@@ -206,20 +238,23 @@ def load_arxiv(cap: int = 6000) -> list[Record]:
                 abstract = _clean(line)
                 if not _accept(abstract):
                     continue
+                digest = sha256_text(abstract)[:12]
                 records.append(
                     Record(
-                        id=f"arxiv-{sha256_text(abstract)[:12]}",
-                        text=abstract, label=0, domain="formal_academic",
-                        generator="human", source=OOD_FORMAL_SOURCE,
-                        group=f"arxiv-{sha256_text(abstract)[:12]}",
+                        id=f"arxiv-{digest}",
+                        text=abstract, label=0,
+                        # The field goes in `domain` so a per-domain report separates
+                        # memorised diction from genuine detection, and in `source`
+                        # so the splitter can route one whole topic out of domain.
+                        domain=topic,
+                        generator="human", source=topic,
+                        group=f"arxiv-{digest}",
                     )
                 )
                 kept += 1
-                if len(records) >= cap:
+                if kept >= per_topic:
                     break
             log.info("arxiv abstracts from %s: %s rows", topic, kept)
-            if len(records) >= cap:
-                break
         return records
     dataset = _hf_dataset("gfissore/arxiv-abstracts-2021", None, "train")  # pragma: no cover
     if dataset is None:
@@ -227,9 +262,11 @@ def load_arxiv(cap: int = 6000) -> list[Record]:
     for row in dataset:  # pragma: no cover
         text = _clean(str(row.get("abstract", "")))
         if _accept(text):
+            # Hub fallback has no field metadata, so it cannot take part in the
+            # unseen-topic holdout; it is tagged as a single topic and treated as one.
             records.append(Record(id=f"arxivd-{sha256_text(text)[:10]}", text=text, label=0,
-                                  domain="formal_academic", generator="human",
-                                  source=OOD_FORMAL_SOURCE, group=f"arxiv-{sha256_text(text)[:12]}"))
+                                  domain="arxiv_ai", generator="human",
+                                  source="arxiv_ai", group=f"arxiv-{sha256_text(text)[:12]}"))
         if len(records) >= cap:
             break
     return records
@@ -371,18 +408,34 @@ def split_records(
     The cost is a changed meaning for ``test_ood``: ``formal_academic`` becomes a
     *seen* domain with *unseen* documents. Reported numbers must say so.
     """
-    formal = [r for r in records if r.source == OOD_FORMAL_SOURCE]
+    formal_sources = set(ARXIV_TOPICS.values())
+    formal = [r for r in records if r.source in formal_sources]
     other_ood = [
         r for r in records
         if r.domain == OOD_DOMAIN or r.domain == "mage_heldout"
     ]
+    topic_counts: dict[str, int] = {}
+    for r in formal:
+        topic_counts[r.source] = topic_counts.get(r.source, 0) + 1
+    holdout_topic = ""
+    if len(topic_counts) > 1:
+        # Hold out the LARGEST topic whole. A random split of one topic only tests
+        # unseen documents; holding out a field tests unseen diction, which is the
+        # failure that produced a 99% human FPR on formal academic prose.
+        holdout_topic = max(topic_counts, key=lambda k: topic_counts[k])
+        log.info("arxiv holdout topic: %s (%s rows kept out of domain)",
+                 holdout_topic, topic_counts[holdout_topic])
     if mix_formal > 0.0 and formal:
         # Deterministic so a rebuild is reproducible and the halves never overlap.
         rng = random.Random(43)
         ordered = sorted(formal, key=lambda r: r.id)
         rng.shuffle(ordered)
         keep_out = int(len(ordered) * min(max(mix_formal, 0.0), 1.0))
-        held_out, moved_in = ordered[:keep_out], ordered[keep_out:]
+        forced_out = [r for r in ordered if r.source == holdout_topic]
+        remaining = [r for r in ordered if r.source != holdout_topic]
+        extra = max(0, keep_out - len(forced_out))
+        held_out = forced_out + remaining[:extra]
+        moved_in = remaining[extra:]
         log.info(
             "formal mix: %s arXiv rows moved into train/val/test, %s kept out of domain",
             len(moved_in), len(held_out),

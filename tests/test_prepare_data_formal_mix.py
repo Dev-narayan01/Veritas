@@ -27,26 +27,32 @@ sys.path.insert(0, str(_ROOT / "ml"))
 
 from common import RunConfig  # noqa: E402
 from prepare_data import (  # noqa: E402
+    ARXIV_TOPICS,
     OOD_DOMAIN,
-    OOD_FORMAL_SOURCE,
     Record,
     split_records,
 )
 
+AI_TOPIC = ARXIV_TOPICS["artificial intelligence"]
+CV_TOPIC = ARXIV_TOPICS["computer vision"]
 
-def _corpus(n_formal: int = 200, n_hc3: int = 400) -> list[Record]:
+
+def _corpus(
+    n_formal: int = 200, n_hc3: int = 400, topics: tuple[str, ...] = (AI_TOPIC,)
+) -> list[Record]:
     """Enough rows that every split is non-empty after the 60/10/10/20 cut."""
     records: list[Record] = []
     for i in range(n_formal):
         text = f"arxiv abstract number {i} about a narrow technical subject"
+        topic = topics[i % len(topics)]
         records.append(
             Record(
                 id=f"arxiv-{i:04d}",
                 text=text,
                 label=0,
-                domain="formal_academic",
+                domain=topic,
                 generator="human",
-                source=OOD_FORMAL_SOURCE,
+                source=topic,
                 group=f"arxiv-{i:04d}",
             )
         )
@@ -74,23 +80,23 @@ def _ids(rows: list[Record]) -> set[str]:
 def test_default_keeps_every_arxiv_row_out_of_training() -> None:
     """0.0 is the original behaviour and must not change silently."""
     splits = split_records(_corpus(), RunConfig(smoke=False))
-    formal_in_train = [r for r in splits["train"] if r.source == OOD_FORMAL_SOURCE]
+    formal_in_train = [r for r in splits["train"] if r.source not in ("hc3",)]
     assert formal_in_train == []
-    in_ood = [r for r in splits["test_ood"] if r.source == OOD_FORMAL_SOURCE]
+    in_ood = [r for r in splits["test_ood"] if r.source != "hc3"]
     assert len(in_ood) == 200
 
 
 def test_mixing_moves_formal_rows_into_training() -> None:
     splits = split_records(_corpus(), RunConfig(smoke=False), mix_formal=0.5)
-    formal_in_train = [r for r in splits["train"] if r.source == OOD_FORMAL_SOURCE]
+    formal_in_train = [r for r in splits["train"] if r.source != "hc3"]
     assert formal_in_train, "no arXiv rows reached train, so the mix did nothing"
 
 
 def test_held_out_and_mixed_in_formal_rows_are_disjoint() -> None:
     """No abstract may be both trained on and tested on."""
     splits = split_records(_corpus(), RunConfig(smoke=False), mix_formal=0.5)
-    in_train = _ids([r for r in splits["train"] if r.source == OOD_FORMAL_SOURCE])
-    in_ood = _ids([r for r in splits["test_ood"] if r.source == OOD_FORMAL_SOURCE])
+    in_train = _ids([r for r in splits["train"] if r.source != "hc3"])
+    in_ood = _ids([r for r in splits["test_ood"] if r.source != "hc3"])
     assert in_train and in_ood, "both sides should be non-empty at 0.5"
     assert not (in_train & in_ood), f"{len(in_train & in_ood)} abstracts leaked across"
 
@@ -117,3 +123,27 @@ def test_extreme_values_do_not_crash() -> None:
     for value in (0.0, 1.0, 2.0, -1.0):
         splits = split_records(_corpus(), RunConfig(smoke=False), mix_formal=value)
         assert "train" in splits and "test_ood" in splits
+
+
+def test_one_whole_topic_is_held_out_when_several_exist() -> None:
+    """A random split of one field only tests unseen documents.
+
+    Holding out a whole field tests unseen diction, which is the failure that put a
+    99% human false-positive rate on the earlier model.
+    """
+    corpus = _corpus(n_formal=400, topics=(AI_TOPIC, CV_TOPIC))
+    splits = split_records(corpus, RunConfig(smoke=False), mix_formal=0.5)
+    ood_topics = {r.source for r in splits["test_ood"] if r.source != "hc3"}
+    train_topics = {r.source for r in splits["train"] if r.source != "hc3"}
+    assert len(ood_topics) >= 1
+    # the held-out topic must not appear in training at all
+    whole = [t for t in ood_topics if t not in train_topics]
+    assert whole, f"no topic was held out whole; ood={ood_topics} train={train_topics}"
+
+
+def test_mixed_in_topics_still_contribute_to_training() -> None:
+    """The point of --mix-formal is that some formal text is trained on."""
+    corpus = _corpus(n_formal=400, topics=(AI_TOPIC, CV_TOPIC))
+    splits = split_records(corpus, RunConfig(smoke=False), mix_formal=0.5)
+    train_topics = {r.source for r in splits["train"] if r.source != "hc3"}
+    assert train_topics, "no formal topic reached training at all"

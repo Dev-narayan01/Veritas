@@ -206,6 +206,33 @@ Reading the two rows together: `formal_academic` improved most because that is e
 what was added to training. `wiki_csai` improved less because it is a *related* domain,
 not the same one. The 41-point gap between them is the memorisation fraction.
 
+### Holding out a whole field, not random documents
+
+The earlier OOD split held out arXiv abstracts *at random* from a single field. That
+tests unseen documents, not unseen diction, and it flatters a model that has only
+learned one field's register.
+
+The mirror contains three fields, so the loader now reads all of them and tags each
+abstract with its own topic:
+
+| file | rows | topic tag |
+|---|---|---|
+| `artificial intelligence_*_abs.txt` | 10,181 | `arxiv_ai` |
+| `computer vision_*_abs.txt` | 14,582 | `arxiv_cv` |
+| `language generation_*_abs.txt` | 14,514 | `arxiv_lg` |
+
+Previously the loader `break`-ed after the first topic file, so every arXiv row came
+from artificial intelligence and the random split only ever removed documents.
+
+At `--mix-formal 0.5` the **largest field is held out whole** and the remainder is
+mixed into train/val/test. This keeps `test_ood` an unseen-*field* test while still
+teaching the model formal academic prose. The per-domain report then separates:
+
+* the mixed-in fields — measures whether formal prose is recognised at all;
+* the held-out field — measures whether that transfers to unseen diction.
+
+`wiki_csai` and `mage_heldout` remain unseen domains in every configuration.
+
 **`--mix-formal` changes what `test_ood` means.** At 0.0, `formal_academic` is an
 unseen *domain*. At 0.5 it is a seen domain with unseen *documents*. Any reported
 number has to say which it is, which is why the manifest now records `ood_domains`,
