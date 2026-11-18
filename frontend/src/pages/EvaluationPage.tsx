@@ -357,15 +357,39 @@ function ConfusionAndLength({ data }: { data: MetricsResponse }) {
   }
   if (rows.length === 0) return null
   const buckets = ['<100', '100-250', '250-500', '500+']
+  // `thresholds.fast` is the band that actually decides verdicts on this deployment.
+  // `rejected_tuned_band` is what the tuner picked and we did not ship.
+  const thresholds = (data.thresholds ?? null) as Record<string, any> | null
+  const fastBand = (thresholds?.fast ?? null) as Record<string, any> | null
+  const rejected = (fastBand?.rejected_tuned_band ?? null) as Record<string, any> | null
+  const pct = (value: unknown) =>
+    typeof value === 'number' ? `${Math.round(value * 100)}%` : '—'
+  const describeBand = (band: Record<string, any>) =>
+    `commits on ${pct(band.measured?.coverage)} of held-out texts, ${pct(band.measured?.accuracy)} accurate`
   return (
     <Card title="Confusion matrices and accuracy by length">
       <p className="muted mb-2 text-xs">
-        Counts of the verdicts the system actually reported at the tuned thresholds.
+        Counts of the verdicts the run reported at the tuned thresholds.
         An abstention is reported as &ldquo;not AI&rdquo;, so it lands in the left-hand column; the
         number of abstentions is shown separately for each true class. That is why the
         false-negative cell is larger than the false-positive cell — that asymmetry is the 1%
         false-positive target working as intended.
       </p>
+      {fastBand && (
+        <p className="mb-3 rounded-md border p-3 text-xs" style={{ borderColor: 'var(--border)' }}>
+          <strong>Deployed bands differ from the tuned ones above.</strong> These counts were
+          measured with the tuner&apos;s band; the live site uses a different band for fast, so
+          read them as the model&apos;s behaviour at a strict operating point rather than the
+          site&apos;s current one. Fast now runs{' '}
+          <code>
+            t_human {fastBand.t_human} / t_ai {fastBand.t_ai}
+          </code>
+          {' '}({describeBand(fastBand)}). The tuned band was rejected because out-of-domain it
+          fired on {pct(rejected?.measured?.coverage)} of texts and was wrong on{' '}
+          {rejected?.measured?.wrong ?? '?'} of them, against{' '}
+          {fastBand.measured?.wrong ?? '?'} wrong at the deployed band.
+        </p>
+      )}
       <div className="grid gap-3 md:grid-cols-2">
         {rows.map((row) => {
           const c = row.confusion
