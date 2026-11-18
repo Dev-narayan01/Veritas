@@ -97,6 +97,36 @@ python -c "import torch; print(torch.cuda.get_device_name(0))"
 
 You want `NVIDIA GeForce RTX 3050`.
 
+### Two traps before the first run
+
+**`train 1 rows` in the banner.** `ml/prepare_data.py` falls back to a 60-row synthetic
+demo set when no dataset source is reachable, and the split then puts a single row in
+`train`. It logs `synthetic_demo` at WARNING and records it in
+`data/processed/split_manifest.json`. The training script now refuses to start below
+`--min-rows` (default 100) rather than producing a meaningless number. Fix the data:
+
+```bash
+python ml/prepare_data.py --force
+grep -o '"data_source": *"[^"]*"' data/processed/split_manifest.json
+```
+
+You want `hc3` or `local_csv`, not `synthetic_demo`.
+
+**`InductorError: Failed to find C compiler`.** ModernBERT calls `torch.compile` on its
+embeddings when `config.reference_compile` is truthy, and on CUDA that goes through
+Triton, which JIT-builds a CUDA extension. A fresh WSL installation has no `gcc`, so the
+first training step dies. The script sets `reference_compile = False` by default, which
+skips the compiled path entirely:
+
+```
+17%|████ | 0/1 [00:05<?, ?it/s]
+torch._inductor.exc.InductorError: RuntimeError: Failed to find C compiler.
+```
+
+`--compile` opts back in, and then you need `sudo apt install -y build-essential`.
+Measured trade-off: compiling costs minutes of warmup for a marginal speedup on a
+149M-parameter model, so off is the sane default.
+
 ### If `import torch` itself fails on Windows
 
 Two different failures look alike. Separate them before doing anything:

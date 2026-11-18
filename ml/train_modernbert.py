@@ -55,11 +55,16 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p.add_argument("--weight-decay", type=float, default=0.01)
     p.add_argument("--warmup-ratio", type=float, default=0.06)
     p.add_argument("--limit", type=int, default=0, help="cap training rows (smoke testing)")
+    p.add_argument("--min-rows", type=int, default=100,
+                   help="refuse to train below this many rows; catches the demo fallback")
     p.add_argument("--seed", type=int, default=42)
     p.add_argument("--fp16", action="store_true", default=True)
     p.add_argument("--no-fp16", dest="fp16", action="store_false")
     p.add_argument("--allow-cpu", action="store_true",
                    help="train on CPU instead of exiting; for smoke tests only")
+    p.add_argument("--compile", action="store_true", default=False,
+                   help="let ModernBERT torch.compile its embeddings; needs gcc and "
+                        "costs minutes of warmup, for a marginal speedup")
     return p.parse_args(argv)
 
 
@@ -185,10 +190,45 @@ def main(argv: list[str] | None = None) -> int:
     print(f"train {len(train_frame)} rows  val {len(val_frame)} rows")
     print(f"  train label balance: {train_frame.label.value_counts().to_dict()}")
 
+    # prepare_data.py falls back to a 60-row synthetic demo set when it cannot reach
+    # a dataset source, and split_records then puts one row in train. Training on that
+    # produces a number with no meaning, which is exactly what this project promises
+    # not to publish. Stop and say which file is wrong instead.
+    if len(train_frame) < args.min_rows:
+        sys.exit(
+            f"Only {len(train_frame)} training rows in {args.data} (minimum "
+            f"{args.min_rows}).\n"
+            "This is the synthetic demo fallback, not real data - prepare_data.py uses\n"
+            "it when no dataset source could be reached, and it is not a result.\n"
+            "Rebuild the splits and read what it says about the source:\n"
+            "  python ml/prepare_data.py --force\n"
+            "If it logs 'synthetic_demo', the downloads failed; the manifest at\n"
+            "data/processed/split_manifest.json records which sources loaded."
+        )
+    if train_frame.label.nunique() < 2:
+        sys.exit(
+            f"Training data has only one class: {train_frame.label.value_counts().to_dict()}\n"
+            "A classifier cannot learn from that, and any metric it reports is noise."
+        )
+
     tokenizer = AutoTokenizer.from_pretrained(args.model)
+    # ModernBERT calls torch.compile on its embeddings unless reference_compile is
+    # False (modeling_modernbert.py:218, gated by config.reference_compile). On a GPU
+    # that path goes through Triton, which JIT-builds a CUDA extension and needs a C
+    # compiler; without one it raises
+    #   InductorError: RuntimeError: Failed to find C compiler
+    # The flag is consulted in forward(), so passing it to from_pretrained has no
+    # effect - _maybe_set_compile() only auto-disables on cpu/mps, not cuda.
     model = AutoModelForSequenceClassification.from_pretrained(
         args.model, num_labels=2, id2label=LABELS, label2id={"human": 0, "ai": 1}
     )
+    if not args.compile:
+        # getattr-guarded: transformers 5.x removed this attribute along with the
+        # @torch.compile decorators, and an unconditional set would create the
+        # attribute on a config that no longer reads it.
+        if hasattr(model.config, "reference_compile"):
+            model.config.reference_compile = False
+            print("torch.compile disabled for ModernBERT (no C compiler needed)")
 
     def encode(batch):
         return tokenizer(batch["text"], truncation=True, max_length=args.max_len, padding=False)
