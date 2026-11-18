@@ -494,10 +494,28 @@ def _load_ppl(directory: Path) -> Any:
         import pickle
 
         with open(bundle_path, "rb") as handle:
-            bundle = pickle.load(handle)
+            stored = pickle.load(handle)
         with gzip.open(counts_path, "rb") as handle:
             payload = json.loads(handle.read())
-        bundle.attach_counts({tuple(json.loads(key)): value for key, value in payload["counts"].items()})
+        counts = {tuple(json.loads(key)): value for key, value in payload["counts"].items()}
+        # The shipped bundle is a dict of primitives (see scripts/build_ppl_bundle.py):
+        # pickling ``_PplBundle`` itself would embed ``_lib.core`` in the pickle, and the
+        # deployed function is one generated file where ``_lib`` does not exist. A
+        # ``_PplBundle`` instance is still accepted so older bundles keep loading.
+        if isinstance(stored, _PplBundle):
+            bundle = stored
+        elif isinstance(stored, dict) and "classifier" in stored:
+            bundle = _PplBundle(
+                classifier=stored["classifier"],
+                feature_names=list(stored.get("feature_names") or []),
+                style_reference=dict(stored.get("style_reference") or {}),
+                order=stored.get("order"),
+                vocab_size=stored.get("vocab_size"),
+                total_tokens=stored.get("total_tokens"),
+            )
+        else:
+            return None
+        bundle.attach_counts(counts)
         return bundle
     except Exception:  # noqa: BLE001
         return None
@@ -694,6 +712,9 @@ def score(text: str, mode: str = "lite") -> dict[str, Any]:
         "ci_low": None,
         "ci_high": None,
         "verdict": "too_short",
+        # Filled in below with the band that actually decides the verdict. It must not be
+        # the lite band whenever ``fast`` ran: reporting thresholds that did not produce
+        # the verdict is exactly the kind of dishonesty this deployment exists to avoid.
         "thresholds": {
             "t_human": thresholds.get("t_human"),
             "t_ai": thresholds.get("t_ai"),
@@ -752,6 +773,7 @@ def score(text: str, mode: str = "lite") -> dict[str, Any]:
         t_ai = float(thresholds["t_ai"])
         probability = raw
     calibrated = stacker is not None and stacker.thresholds is not None
+    ai["thresholds"] = {"t_human": round(t_human, 6), "t_ai": round(t_ai, 6)}
     components_run = ["classical"] + (["ppl_gpt2"] if ppl_probability is not None else [])
     if probability <= t_human:
         verdict = "likely_human"
@@ -777,10 +799,20 @@ def score(text: str, mode: str = "lite") -> dict[str, Any]:
             "explanation": {
                 "source": "rule_based",
                 "text": (
-                    "Lite mode runs the stylometric classifier only: word-frequency typicality, "
-                    "sentence-length variation, punctuation rhythm and function-word rates. It cannot "
-                    "see perplexity or zero-shot signals, so a mid-band score means the text looks "
-                    "more or less like the training mixture, not that a person did or did not write it."
+                    (
+                        "Fast mode adds a perplexity component (a trigram language model scored "
+                        "against its own training counts) to the stylometric signal. The triggers for "
+                        "an AI verdict are deliberately strict here, so this mode abstains far more "
+                        "often than Lite: a mid-band score means the text does not clear the strict "
+                        "band, not that a person wrote it."
+                    )
+                    if ppl_probability is not None
+                    else (
+                        "Lite mode runs the stylometric classifier only: word-frequency typicality, "
+                        "sentence-length variation, punctuation rhythm and function-word rates. It cannot "
+                        "see perplexity or zero-shot signals, so a mid-band score means the text looks "
+                        "more or less like the training mixture, not that a person did or did not write it."
+                    )
                 ),
             },
         }

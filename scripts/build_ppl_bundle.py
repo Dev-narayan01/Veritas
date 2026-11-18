@@ -50,7 +50,6 @@ def main() -> int:
 
     import joblib
 
-    from _lib.core import _PplBundle  # the class the function will unpickle into
 
     artifact = joblib.load(SRC)
     if getattr(artifact, "backend", None) != "ngram_lm":
@@ -74,16 +73,22 @@ def main() -> int:
     with open(COUNTS, "wb") as handle:
         handle.write(gzip.compress(raw, 1))
 
-    bundle = _PplBundle(
-        classifier=artifact.classifier,
-        feature_names=list(artifact.feature_names),
-        style_reference=dict(getattr(artifact, "style_reference", {}) or {}),
-        order=lm.order,
-        vocab_size=lm.vocab_size,
-        total_tokens=lm.total_tokens,
-    )
+    # Serialise *plain data*, not a ``_PplBundle``. Pickling the class would record
+    # ``_lib.core._PplBundle``, and the deployed function is one generated file with the
+    # core inlined -- ``_lib`` does not exist there, so unpickling raised ImportError and
+    # ``fast`` degraded to ``lite`` while every local test passed. A dict of primitives
+    # plus the sklearn estimator (importable anywhere) has no such dependency.
+    payload_bundle = {
+        "format": 1,
+        "classifier": artifact.classifier,
+        "feature_names": list(artifact.feature_names),
+        "style_reference": dict(getattr(artifact, "style_reference", {}) or {}),
+        "order": lm.order,
+        "vocab_size": lm.vocab_size,
+        "total_tokens": lm.total_tokens,
+    }
     with open(BUNDLE, "wb") as handle:
-        pickle.dump(bundle, handle, protocol=4)
+        pickle.dump(payload_bundle, handle, protocol=4)
 
     print(f"wrote {COUNTS.relative_to(REPO)} ({COUNTS.stat().st_size / 1048576:.1f} MB)")
     print(f"wrote {BUNDLE.relative_to(REPO)} ({BUNDLE.stat().st_size / 1024:.0f} KB)")

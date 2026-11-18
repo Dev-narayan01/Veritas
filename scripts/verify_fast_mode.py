@@ -12,7 +12,6 @@ disagreement beyond floating-point noise.
 
 from __future__ import annotations
 
-import json
 import sys
 from pathlib import Path
 
@@ -24,21 +23,21 @@ TOL = 1e-9
 
 
 def main() -> int:
-    import gzip
-    import pickle
-
     import joblib
     import pandas as pd
 
     from app.detector.perplexity import PerplexityArtifact  # the trained implementation
-    from _lib.core import _PplBundle
+    from _lib.core import _PplBundle, _load_ppl
 
     artifact: PerplexityArtifact = joblib.load(REPO / "ml" / "artifacts" / "ppl_gpt2_model.pkl")
-    with open(REPO / "api" / "artifacts" / "ppl_bundle.pkl", "rb") as handle:
-        bundle: _PplBundle = pickle.load(handle)
-    with gzip.open(REPO / "api" / "artifacts" / "ppl_lm.json.gz", "rb") as handle:
-        payload = json.loads(handle.read())
-    bundle.attach_counts({tuple(json.loads(k)): v for k, v in payload["counts"].items()})
+    # Load through the runtime's own loader rather than re-implementing it here. The loader
+    # is what ships, and a divergent copy is how the ``_lib.core`` pickle reference got
+    # past verification once already: this script unpickled a ``_PplBundle`` happily while
+    # the deployed single-file function could not.
+    bundle: _PplBundle | None = _load_ppl(REPO / "api" / "artifacts")
+    if bundle is None:
+        print("perplexity bundle not present or not loadable", file=sys.stderr)
+        return 3
 
     print(f"bundle: order={bundle.order} vocab={bundle.vocab_size} total={bundle.total_tokens:,}")
 

@@ -4,7 +4,10 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import os
+import shutil
 import sys
+import textwrap
 from pathlib import Path
 
 import pytest
@@ -369,3 +372,70 @@ def test_ppl_port_matches_the_trained_implementation() -> None:
         pytest.skip("perplexity bundle not present")
     assert result.returncode == 0, result.stdout[-2000:] + result.stderr[-2000:]
     assert "IDENTICAL" in result.stdout
+
+
+def test_ppl_bundle_pickle_names_no_project_module() -> None:
+    """The deployed function is one generated file; ``_lib`` does not exist inside it.
+
+    Pickling a ``_PplBundle`` recorded ``_lib.core._PplBundle``, so on Vercel the unpickle
+    raised ImportError, ``_load_ppl`` swallowed it and ``fast`` silently degraded to
+    ``lite`` -- while every local test passed, because ``api/`` was importable there. That
+    regression shipped once; this test is the guard.
+    """
+    import pickletools
+
+    path = API / "artifacts" / "ppl_bundle.pkl"
+    if not path.exists():
+        pytest.skip("perplexity bundle not present")
+    data = path.read_bytes()
+    refs = {
+        arg
+        for op, arg, _ in pickletools.genops(data)
+        if isinstance(arg, str) and (arg == "_lib" or arg.startswith("_lib.") or arg.startswith("scripts"))
+    }
+    assert not refs, f"pickle references modules the deployment does not ship: {sorted(refs)}"
+
+
+def test_ppl_bundle_loads_without_the_api_package_on_sys_path(tmp_path: Path) -> None:
+    """Load the generated function the way Vercel does: copied out, isolated interpreter."""
+    import subprocess
+
+    generated = (API / "health.py").read_text()
+    if "ppl_bundle.pkl" not in generated:
+        pytest.skip("generated health function has no ppl path")
+    (tmp_path / "api").mkdir()
+    (tmp_path / "api" / "health.py").write_text(generated)
+    artifacts = API / "artifacts"
+    if not (artifacts / "ppl_bundle.pkl").exists():
+        pytest.skip("perplexity bundle not present")
+    shutil.copytree(artifacts, tmp_path / "api" / "artifacts")
+    script = textwrap.dedent(
+        """
+        import importlib.util, json, os, sys
+        sys.path = [p for p in sys.path if "Veritas/api" not in p]
+        spec = importlib.util.spec_from_file_location("fn", "api/health.py")
+        module = importlib.util.module_from_spec(spec)
+        sys.modules["fn"] = module
+        spec.loader.exec_module(module)
+        print(json.dumps({"ppl": module.BODY["models_loaded"]["ppl_gpt2"]}))
+        """
+    )
+    # Production sets no VERITAS_ARTIFACT_DIR; conftest points it at ml/artifacts, which
+    # would make the subprocess read the training bundle instead of the copied one.
+    environment = {
+        key: value
+        for key, value in os.environ.items()
+        if key not in {"VERITAS_ARTIFACT_DIR", "VERITAS_DATA_DIR", "VERITAS_DB_URL"}
+    }
+    environment["PYTHONPATH"] = os.pathsep.join(sys.path)
+    result = subprocess.run(
+        [sys.executable, "-S", "-c", script],
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+        timeout=300,
+        env=environment,
+    )
+    assert result.returncode == 0, result.stderr[-3000:]
+    payload = json.loads(result.stdout.strip().splitlines()[-1])
+    assert payload["ppl"] is True, "the perplexity component must load in the single-file layout"
