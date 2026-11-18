@@ -10,7 +10,7 @@ import type {
   ProgressEvent,
   Verdict,
 } from '../types'
-import { fetchJson, resolveApiBase, type ApiBase } from './apiBase'
+import { fetchJson, modeIsAvailable, resolveApiBase, type ApiBase } from './apiBase'
 
 let current: ApiBase = { base: '', mode: 'offline', health: null, message: null }
 
@@ -114,7 +114,16 @@ export const api = {
         {
           method: 'POST',
           headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({ text: payload.text, mode: 'lite' }),
+          // Honour the mode the user picked. Sending 'lite' unconditionally made the
+          // mode selector decorative on this deployment. The server degrades fast->lite
+          // and says so in mode_used, so an unavailable mode cannot be faked here.
+          body: JSON.stringify({
+            text: payload.text,
+            mode:
+              payload.options.mode && modeIsAvailable(current.health, payload.options.mode)
+                ? payload.options.mode
+                : 'lite',
+          }),
         },
         60_000,
       )

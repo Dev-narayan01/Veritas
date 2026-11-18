@@ -79,14 +79,21 @@ export async function resolveApiBase(options?: {
   try {
     const health = await probe('')
     const modes = health.modes ?? []
-    const lite = modes.length > 0 && modes.every((m) => m.mode === 'lite' || !m.available)
+    // The question is not "is anything available" but "is the *full server* here". `fast`
+    // becoming available lit up that check, so the site would have offered file uploads
+    // and server-side history that these functions do not implement. Anything that is not
+    // the full server means reduced capabilities, whatever detectors it happens to run.
+    const full = modes.some((m) => (m.mode === 'standard' || m.mode === 'deep') && m.available)
+    const fast = modes.some((m) => m.mode === 'fast' && m.available)
     return {
       base: '',
-      mode: lite ? 'lite' : 'full',
+      mode: full ? 'full' : 'lite',
       health,
-      message: lite
-        ? 'Lite mode: reduced accuracy, no paraphrase detection'
-        : null,
+      message: full
+        ? null
+        : fast
+          ? 'Lite deployment with fast mode available: no paraphrase detection, no files, no history'
+          : 'Lite mode: reduced accuracy, no paraphrase detection',
     }
   } catch {
     return {

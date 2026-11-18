@@ -6,6 +6,7 @@ import { useNavigate } from 'react-router-dom'
 import { FileText, Link2, Trash2, Type, UploadCloud } from 'lucide-react'
 import { toast } from 'sonner'
 import { api, reasonForMode } from '../lib/api'
+import { modeIsAvailable } from '../lib/apiBase'
 import { bytes, stageLabel } from '../lib/format'
 import { useUi } from '../store'
 import { useGraphicsPreference, useGraphicsTier } from '../hooks/useGraphicsTier'
@@ -86,7 +87,11 @@ export function AnalyzePage() {
   }
 
   const lite = api.isLite()
-  const modeReason = (mode: string) => (lite && mode !== 'lite' ? 'Needs the full analysis server' : reasonForMode(ui.health, mode))
+  // Lite offers lite and, when its bundle is deployed, fast. Everything else needs the
+  // full server, so it stays disabled with the server's own reason rather than a generic
+  // label -- and fast must not be offered when it would only silently degrade.
+  const modeReason = (mode: string) =>
+    lite ? (modeIsAvailable(ui.health, mode) ? reasonForMode(ui.health, mode) : 'Needs the full analysis server') : reasonForMode(ui.health, mode)
 
   return (
     <div className="space-y-6">

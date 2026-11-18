@@ -27,7 +27,11 @@ DISCLAIMER = (
 LITE_LIMITATIONS = [
     "Lite mode analyses pasted text only: no PDF, DOCX, PPTX, OCR, URL or ZIP parsing.",
     "Plagiarism, batch comparison and document reports run on the full server, not here.",
-    "Only the classical stylometric detector runs in Lite; the perplexity and zero-shot components need the full server.",
+    # This list is static text the UI shows verbatim, so it must not claim a component is
+    # missing when it is bundled: health reports what actually loaded, and the honest
+    # statement is about the *zero-shot* detectors, which are the ones that stay behind.
+    "The zero-shot detectors (Binoculars, Fast-DetectGPT) need the full server; the "
+    "classical detector always runs and the perplexity component runs when its bundle is deployed.",
     "Sentence heatmaps are not available in Lite, so no highlight can be drawn.",
 ]
 LITE_COMPONENTS = ("classical",)

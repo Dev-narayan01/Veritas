@@ -29,6 +29,37 @@ describe('resolveApiBase', () => {
     expect(state.message).toBeTruthy()
   })
 
+  it('stays in lite mode when fast is available but the full server is not', async () => {
+    // `fast` used to be enough to classify the deployment as `full`, which then offered
+    // file uploads and server-side history that the Lite functions do not implement.
+    vi.stubEnv('VITE_API_BASE_URL', '')
+    const withFast = {
+      ...health,
+      modes: [
+        { mode: 'lite', available: true, reason: null, components: ['classical'] },
+        { mode: 'fast', available: true, reason: null, components: ['classical', 'ppl_gpt2'] },
+        { mode: 'standard', available: false, reason: 'needs the full server', components: [] },
+      ],
+    } as unknown as Health
+    const state = await resolveApiBase({ probe: async () => withFast })
+    expect(state.mode).toBe('lite')
+    expect(state.message).toContain('fast mode available')
+  })
+
+  it('reports full only when a zero-shot mode is actually available', async () => {
+    vi.stubEnv('VITE_API_BASE_URL', '')
+    const full = {
+      ...health,
+      modes: [
+        { mode: 'lite', available: true, reason: null, components: ['classical'] },
+        { mode: 'standard', available: true, reason: null, components: [] },
+      ],
+    } as unknown as Health
+    const state = await resolveApiBase({ probe: async () => full })
+    expect(state.mode).toBe('full')
+    expect(state.message).toBeNull()
+  })
+
   it('prefers the configured Space and reports wake-up progress', async () => {
     vi.stubEnv('VITE_API_BASE_URL', 'https://example.invalid/')
     const messages: string[] = []
