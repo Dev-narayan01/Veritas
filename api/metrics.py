@@ -927,7 +927,7 @@ def _load() -> dict:
         "corpus_stats": None,
         "embedding_projection": None,
         "plots": [],
-        "plots_base": "/api/metrics/plots",
+        "plots_base": "/metrics/plots",
         "thresholds": None,
         "manifest_notes": [
             "This is the Lite deployment and no evaluation artifacts are bundled with it. "
@@ -965,7 +965,7 @@ def _load() -> dict:
         "corpus_stats": None,
         "embedding_projection": None,
         "plots": payload.get("plots") or [],
-        "plots_base": "/api/metrics/plots",
+        "plots_base": "/metrics/plots",
         "thresholds": _thresholds(directory),
         "manifest_notes": notes,
         "deployment": "lite",

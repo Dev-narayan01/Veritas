@@ -471,3 +471,31 @@ def test_metrics_reports_the_thresholds_in_force() -> None:
     assert reported["fast"]["measured"]["accuracy"] > reported["fast"]["rejected_tuned_band"]["measured"]["accuracy"]
     # The frontend reads the lite band at the top level; that shape must survive.
     assert reported["t_ai"] == pytest.approx(thresholds["lite"]["t_ai"], abs=1e-9)
+
+
+def test_evaluation_figures_are_published_with_the_site() -> None:
+    """`/evaluation` renders every figure it is told about; none may 404.
+
+    The plots were only ever written to ``ml/artifacts/plots``, which is git-ignored, so the
+    deployed page advertised twelve images that all returned 404. Anything listed in
+    ``metrics.json`` has to exist under the published static directory.
+    """
+    sys.path.insert(0, str(API))
+    from _lib import core
+
+    directory = core.find_artifact_dir()
+    if directory is None or not (directory / "metrics.json").exists():
+        pytest.skip("no metrics bundle present")
+    payload = json.loads((directory / "metrics.json").read_text())
+    names = payload.get("plots") or []
+    if not names:
+        pytest.skip("this run lists no plots")
+    published = ROOT / "frontend" / "public" / "metrics" / "plots"
+    missing = [name for name in names if not (published / name).exists()]
+    assert not missing, f"figures advertised but not published: {missing}"
+    for name in names:
+        assert (published / name).stat().st_size > 4096, f"{name} looks truncated"
+
+    generated = (API / "metrics.py").read_text()
+    assert '"/metrics/plots"' in generated, "plots_base must point at the published directory"
+    assert "/api/metrics/plots" not in generated

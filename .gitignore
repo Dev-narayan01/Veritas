@@ -35,6 +35,10 @@ node_modules/
 frontend/node_modules/
 frontend/dist/
 frontend/public/artifacts/
+# Evaluation figures are the evidence behind /evaluation, so they are published with the
+# site (428 KB). They previously 404'd because they were only ever written to the
+# git-ignored training directory.
+!frontend/public/metrics/plots/
 frontend/.vite/
 playwright-report/
 test-results/
