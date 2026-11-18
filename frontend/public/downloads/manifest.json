@@ -1,0 +1,15 @@
+{
+  "file": "veritas_artifacts.zip",
+  "bytes": 12412115,
+  "sha256": "0783a00a1561577759b8b0703d895b02c3fb001516c8977c8e94ba67f68c6b89",
+  "run": "cpu",
+  "modes_fitted": [
+    "lite",
+    "fast"
+  ],
+  "created_at": "2026-11-17T17:02:12Z",
+  "files": 39,
+  "install": "python ml/adopt_artifacts.py veritas_artifacts.zip",
+  "verify": "shasum -a 256 veritas_artifacts.zip",
+  "note": "Trained artifacts only. Training data is git-ignored; run `python ml/prepare_data.py` to fetch HC3 (~70 MB)."
+}

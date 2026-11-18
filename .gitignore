@@ -39,6 +39,8 @@ frontend/public/artifacts/
 # site (428 KB). They previously 404'd because they were only ever written to the
 # git-ignored training directory.
 !frontend/public/metrics/plots/
+# The pre-trained artifact bundle is served so a fresh clone can skip retraining.
+!frontend/public/downloads/
 frontend/.vite/
 playwright-report/
 test-results/
