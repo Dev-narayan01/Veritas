@@ -122,3 +122,30 @@ def test_by_length_uses_positional_masks() -> None:
     code = [ln for ln in lines if not ln.lstrip().startswith("#")]
     assert any("np.flatnonzero(bucket_values == label_value)" in ln for ln in code)
     assert not any("get_indexer" in ln for ln in code)
+
+
+def test_by_domain_uses_positional_masks() -> None:
+    """The domain breakdown must not use get_indexer (returns -1 on non-unique index)."""
+    lines = (
+        Path(__file__).resolve().parent.parent / "ml" / "train_modernbert.py"
+    ).read_text().splitlines()
+    code = [ln for ln in lines if not ln.lstrip().startswith("#")]
+    assert any("np.flatnonzero(domain_values == domain_name)" in ln for ln in code)
+    assert not any("get_indexer" in ln for ln in code)
+
+
+def test_report_contains_a_per_domain_breakdown() -> None:
+    """Aggregate OOD numbers are not comparable across --mix-formal values."""
+    source = (
+        Path(__file__).resolve().parent.parent / "ml" / "train_modernbert.py"
+    ).read_text()
+    assert 'entry["by_domain"] = {}' in source
+    assert '"human_false_positive_rate"' in source
+
+
+def test_banner_does_not_mislabel_a_full_run_as_a_subset() -> None:
+    source = (
+        Path(__file__).resolve().parent.parent / "ml" / "train_modernbert.py"
+    ).read_text()
+    assert "    if args.limit:" in source
+    assert "Full run:" in source

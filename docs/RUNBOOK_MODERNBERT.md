@@ -143,6 +143,47 @@ The two halves are disjoint by construction (each abstract carries its own group
 and the split is seeded), so no document is both trained on and tested on. This is
 pinned by `tests/test_prepare_data_formal_mix.py`.
 
+### The mixed run, and why its aggregate OOD number is not comparable
+
+At `--mix-formal 0.5` the same recipe (2 epochs, 1024 tokens, batch 4) produced:
+
+| split | balanced acc | ROC-AUC | human FPR |
+|---|---|---|---|
+| `val_in_domain` | 0.9823 | 0.9981 | 1.0% |
+| `test_ood` | **0.8834** | 0.9193 | **11.5%** |
+
+That is a real change: 99.0% -> 11.5% human false positives. But the two runs were
+**not scored on the same test set**, and the difference is not cosmetic:
+
+```
+mix 0.0:  test_ood n=8272,  AI=1537, human 81.4%
+mix 0.5:  test_ood n=5282,  AI=1537, human 70.9%
+```
+
+The AI count is identical; only the human side shrank, by exactly the arXiv rows that
+moved into training. The mixed model is therefore evaluated against **fewer of the hard
+negatives it was trained to handle**. Some of the gain is a better model and some is an
+easier exam, and an aggregate balanced accuracy cannot separate the two.
+
+**Compare per domain, never in aggregate.** `eval_report.json` now carries `by_domain`
+for every split. `wiki_csai` is the honest yardstick: it stays out of training at any
+`--mix-formal` value, so its human FPR measures generalisation rather than recall of
+the domain just added.
+
+The length breakdown also changed character. With `0.0` the OOD error was flat
+(94.6%-99.5%). With `0.5` it is length-dependent again:
+
+| length | mix 0.0 | mix 0.5 |
+|---|---|---|
+| <100 | 98.6% | 5.4% |
+| 100-200 | 99.5% | 11.0% |
+| 200-400 | 97.9% | 35.4% |
+| 400+ | 94.6% | **42.9%** |
+
+Short text is now handled well and long text still is not. That is the original defect
+re-emerging rather than a new one, and it is the thing a long context window was meant
+to fix.
+
 **`--mix-formal` changes what `test_ood` means.** At 0.0, `formal_academic` is an
 unseen *domain*. At 0.5 it is a seen domain with unseen *documents*. Any reported
 number has to say which it is, which is why the manifest now records `ood_domains`,

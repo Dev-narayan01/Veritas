@@ -329,6 +329,34 @@ def main(argv: list[str] | None = None) -> int:
             human = y == 0
             if human.any():
                 entry["human_false_positive_rate"] = float(pred[human].mean())
+        # Per-domain breakdown. Aggregates across a mixed test set are not comparable
+        # between runs: --mix-formal changes how many arXiv rows the held-out split
+        # contains, so the same model can look better on a smaller, easier set. Every
+        # domain gets its own numbers so a reader can compare like with like.
+        if "domain" in frame.columns:
+            entry["by_domain"] = {}
+            domain_values = frame["domain"].to_numpy()
+            # Positional masks, not get_indexer: the latter returns -1 for misses on a
+            # non-unique index and would silently index from the end of `probs`.
+            for domain_name in pd.unique(domain_values):
+                idx = np.flatnonzero(domain_values == domain_name)
+                dom_y, dom_probs = y[idx], probs[idx]
+                if len(dom_y) < 10:
+                    continue
+                dom_pred = (dom_probs >= 0.5).astype(int)
+                dom_entry: dict[str, object] = {
+                    "n": int(len(dom_y)),
+                    "positive_rate": float(dom_y.mean()),
+                }
+                if len(set(dom_y.tolist())) > 1:
+                    dom_entry["roc_auc"] = float(roc_auc_score(dom_y, dom_probs))
+                    dom_entry["balanced_accuracy"] = float(
+                        balanced_accuracy_score(dom_y, dom_pred)
+                    )
+                if (dom_y == 0).any():
+                    dom_entry["human_false_positive_rate"] = float(dom_pred[dom_y == 0].mean())
+                entry["by_domain"][str(domain_name)] = dom_entry  # type: ignore[index]
+
         # length breakdown: this is the defect we are trying to fix
         buckets = pd.cut(frame["text"].str.split().str.len(), [0, 100, 200, 400, 100_000],
                          labels=["<100", "100-200", "200-400", "400+"])
@@ -366,7 +394,11 @@ def main(argv: list[str] | None = None) -> int:
     print(json.dumps(report["splits"], indent=2))
     print(f"\nsaved to {args.out}")
     print("artefacts: model.safetensors, tokenizer files, eval_report.json")
-    print("A --limit run trains on a subset and is a plumbing check, not a result.")
+    if args.limit:
+        print("A --limit run trains on a subset and is a plumbing check, not a result.")
+    else:
+        print(f"Full run: {len(train_frame)} rows, {args.epochs} epochs, "
+              f"max_len {args.max_len}. Compare OOD numbers per domain, not aggregate.")
     return 0
 
 
