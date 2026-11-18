@@ -23,7 +23,9 @@ export function AnalyzePage() {
   const ui = useUi()
   const [preference] = useGraphicsPreference()
   const { tier } = useGraphicsTier(preference)
-  const [tab, setTab] = useState<Tab>('upload')
+  // On the Lite deployment upload and URL cannot work, so opening on a drop zone that
+  // only errors when clicked is a dead end. Paste is the only real input there.
+  const [tab, setTab] = useState<Tab>(api.isLite() ? 'paste' : 'upload')
   const [files, setFiles] = useState<File[]>([])
   const [text, setText] = useState('')
   const [url, setUrl] = useState('')
@@ -293,6 +295,12 @@ export function AnalyzePage() {
                 <p className="muted mt-1 text-xs">
                   {ui.health?.modes.find((m) => m.mode === ui.mode)?.components.join(' + ') ?? '—'}
                 </p>
+                {ui.mode === 'fast' && (
+                  <p className="muted mt-1 text-xs">
+                    Strict band: it commits on roughly one text in eight and is about 95% accurate
+                    when it does. Most texts come back uncertain, and that is deliberate.
+                  </p>
+                )}
               </div>
 
               <div className="space-y-2">
