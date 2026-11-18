@@ -24,8 +24,11 @@ export function AnalyzePage() {
   const [preference] = useGraphicsPreference()
   const { tier } = useGraphicsTier(preference)
   // On the Lite deployment upload and URL cannot work, so opening on a drop zone that
-  // only errors when clicked is a dead end. Paste is the only real input there.
-  const [tab, setTab] = useState<Tab>(api.isLite() ? 'paste' : 'upload')
+  // only errors when clicked is a dead end. Paste is the only real input there. The
+  // initial state cannot decide this: health is still resolving on first render, so the
+  // switch happens once the mode is known, and only while the visitor has not chosen.
+  const [tab, setTab] = useState<Tab>('upload')
+  const [tabChosen, setTabChosen] = useState(false)
   const [files, setFiles] = useState<File[]>([])
   const [text, setText] = useState('')
   const [url, setUrl] = useState('')
@@ -33,6 +36,10 @@ export function AnalyzePage() {
   const [progress, setProgress] = useState<{ value: number; stage: string; message: string } | null>(null)
   const [samples, setSamples] = useState<Array<{ label: string; text: string }>>([])
   const inputRef = useRef<HTMLInputElement>(null)
+
+  useEffect(() => {
+    if (!tabChosen && ui.apiMode === 'lite') setTab('paste')
+  }, [ui.apiMode, tabChosen])
 
   useEffect(() => {
     api.samples().then(setSamples).catch(() => setSamples([]))
@@ -155,7 +162,10 @@ export function AnalyzePage() {
                   aria-selected={tab === key}
                   className="btn !rounded-lg !px-3 !py-1.5 text-xs"
                   style={tab === key ? { backgroundColor: 'var(--surface-2)', color: 'var(--text)' } : undefined}
-                  onClick={() => setTab(key)}
+                  onClick={() => {
+                    setTab(key)
+                    setTabChosen(true)
+                  }}
                 >
                   <Icon size={14} aria-hidden="true" /> {label}
                 </button>

@@ -148,3 +148,22 @@ describe('About and 404', () => {
     expect(within(heading.parentElement as HTMLElement).getByText('That page does not exist.')).toBeTruthy()
   })
 })
+
+describe('analyze page input default', () => {
+  it('opens on Paste when the deployment is lite', () => {
+    // Upload and URL cannot work on the Lite functions, so opening on the drop zone
+    // showed a control that only errors when clicked.
+    useUi.getState().setHealth(health as never, 'lite', 'Lite deployment')
+    mount('/')
+    const tab = screen.getByRole('tab', { name: /paste/i })
+    expect(tab.getAttribute('aria-selected')).toBe('true')
+    expect(screen.queryByText(/drop files here/i)).toBeNull()
+  })
+
+  it('keeps Upload for the full server', () => {
+    useUi.getState().setHealth(health as never, 'full', null)
+    mount('/')
+    const tab = screen.getByRole('tab', { name: /upload/i })
+    expect(tab.getAttribute('aria-selected')).toBe('true')
+  })
+})
