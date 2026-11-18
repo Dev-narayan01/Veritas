@@ -242,12 +242,55 @@ Inside Linux, **clone into the Linux filesystem, not `/mnt/c`**. `/mnt/c` works 
 through a translation layer that makes torch imports extremely slow and stalls
 dataloading. It is the single biggest performance mistake available here.
 
+### The Python version is the next trap
+
+WSL images now ship **Python 3.14** on recent Ubuntu, and the pins do not support it.
+Checked on PyPI, Linux x86_64 wheel tags:
+
+| package | pinned | Linux wheels up to |
+|---|---|---|
+| `numpy` | 1.26.4 | **cp312** |
+| `pyarrow` | 17.0.0 | **cp312** |
+| `pandas` | 2.2.3 | cp313 |
+| `scikit-learn` | 1.5.2 | cp313 |
+
+So 3.13 has no `numpy` or `pyarrow` wheel and 3.14 has neither. pip then downloads
+source tarballs and fails with:
+
+```
+ERROR: Unknown compiler(s): [['cc'], ['gcc'], ['clang'], ...]
+```
+
+That is not a broken build; it is the wrong interpreter. **Valid range is 3.10–3.12;
+only 3.12 is tested.** Get 3.12 before doing anything else.
+
+`uv` is the reliable route because it downloads its own CPython and does not depend on
+what your distro happens to package:
+
 ```bash
-sudo apt update && sudo apt install -y python3 python3-venv git
+curl -LsSf https://astral.sh/uv/install.sh | sh
+source "$HOME/.local/bin/env"
+uv venv --python 3.12 .venv
+bash scripts/setup_wsl.sh          # detects the 3.12 venv and reuses it
+```
+
+If your `apt` has 3.12 (`apt-cache policy python3.12`), the plain route also works:
+
+```bash
+sudo apt update && sudo apt install -y python3.12 python3.12-venv git
+```
+
+Then:
+
+```bash
 git clone https://github.com/Dev-narayan01/Veritas.git ~/Veritas
 cd ~/Veritas
 bash scripts/setup_wsl.sh
 ```
+
+`setup_wsl.sh` now **refuses** to continue on an unsupported interpreter instead of
+warning and failing 200 lines later, and it reuses an existing supported venv — which is
+what makes the `uv` route compose with it.
 
 `scripts/setup_wsl.sh` checks the GPU passthrough first (installing 539 MB of torch
 before discovering the driver is not passing the GPU through wastes the download),
