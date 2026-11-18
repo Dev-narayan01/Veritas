@@ -112,18 +112,56 @@ Expect `1.26.4 2.2.3 1.5.2`.
 `download.pytorch.org` publishes per-CUDA wheels, and there is no cu121 build for Python
 3.15. With 3.12 it works — and you do not need cu121 specifically.
 
-**Simplest path** (PyPI's `torch` bundles CUDA 12.x and supports 3.11–3.15):
+### PyPI's Windows `torch` is CPU-only — this catches everyone
+
+Measured wheel sizes for torch 2.15.0:
+
+| wheel | size |
+|---|---|
+| `torch-2.15.0-cp312-cp312-win_amd64.whl` (PyPI) | **121 MB** |
+| `torch-2.15.0-cp312-cp312-manylinux_2_28_x86_64.whl` | **514 MB** |
+
+A CUDA build is ~400 MB bigger because it bundles the CUDA runtime. On **Linux**, PyPI's
+`torch` is the CUDA build; on **Windows** it is the CPU build. Installing from PyPI gets
+you a torch that reports `Torch not compiled with CUDA enabled`.
+
+Worse, `ml/requirements.txt` pulls `sentence-transformers`, which depends on `torch`, so
+that install puts the **CPU wheel** in first. A later `pip install torch --upgrade` then
+says "already satisfied" and changes nothing.
+
+**Correct order — note that torch comes last:**
 
 ```powershell
-python -m pip install torch --upgrade
+python -m pip install -r backend/requirements-dev.txt
+python -m pip install -r ml/requirements.txt          # pulls CPU torch, on purpose
 python -m pip install "transformers==4.49.0" accelerate sentencepiece
+
+# now replace the CPU torch with a CUDA build
+python -m pip uninstall -y torch
+python -m pip install torch --index-url https://download.pytorch.org/whl/cu126
 ```
 
-**If you specifically want the CUDA 12.1 wheels:**
+Pick the index from `nvidia-smi` (top right shows `CUDA Version: 12.x`). If the index
+has no matching build:
 
 ```powershell
-python -m pip install torch --index-url https://download.pytorch.org/whl/cu121
+python -m pip index versions torch --index-url https://download.pytorch.org/whl/cu126
 ```
+
+then move to `cu124` / `cu128`, or loosen the version.
+
+### Verify the build, not just the import
+
+`torch.cuda.get_device_name(0)` raises `AssertionError: Torch not compiled with CUDA
+enabled` when you have the CPU wheel. Check the build attribute first — it fails fast and
+says why:
+
+```powershell
+python -c "import torch; print('version:', torch.__version__); print('cuda build:', torch.version.cuda); print('available:', torch.cuda.is_available())"
+```
+
+You need `cuda build: 12.x` (**not `None`**) and `available: True`.
+`cuda build: None` means the CPU wheel is still installed.
 
 Check the GPU is actually visible — this is the single most common silent failure:
 
@@ -175,10 +213,12 @@ Set-ItemProperty -Path 'HKLM:\SYSTEM\CurrentControlSet\Control\FileSystem' -Name
 ```
 
 **Datasets cache location.** `datasets` writes to `%USERPROFILE%\.cache\huggingface`. RAID
-is multi-GB; point it somewhere with room before you start:
+is multi-GB; point it somewhere with room before you start — but confirm the drive exists
+first, or the failure looks unrelated to the cache:
 
 ```powershell
-$env:HF_HOME = "D:\hf_cache"
+Test-Path D:\                # if False, use a path on C:
+$env:HF_HOME = "D:\hf_cache"   # or "C:\hf_cache"
 ```
 
 **Page file / RAM.** You have 8 GB. Windows will swap hard during tokenization. Close
