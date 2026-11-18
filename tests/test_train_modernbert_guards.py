@@ -81,3 +81,44 @@ def test_false_disables_the_compiled_path() -> None:
         cfg.reference_compile = False
     # forward() chooses the compiled branch on truthiness, so False is what matters.
     assert bool(cfg.reference_compile) is False
+
+
+def test_limited_runs_are_marked_in_the_report_schema() -> None:
+    """A --limit run must be labelled, so its numbers cannot be quoted as results."""
+    source = (
+        Path(__file__).resolve().parent.parent / "ml" / "train_modernbert.py"
+    ).read_text()
+    assert '"limited": bool(args.limit)' in source
+    assert "PLUMBING CHECK ONLY" in source
+
+
+def test_ood_is_evaluated_even_for_limited_runs() -> None:
+    """test_ood is where the known length defect lives; a smoke run must surface it."""
+    source = (
+        Path(__file__).resolve().parent.parent / "ml" / "train_modernbert.py"
+    ).read_text()
+    assert 'evaluate(read(args.ood), "test_ood")' in source
+    # the old bug: gated behind `if not args.limit`
+    assert 'if not args.limit:\n        ood_frame' not in source
+
+
+def test_no_instruction_points_at_a_missing_script() -> None:
+    """The script used to print 'Next: python ml/evaluate_modernbert.py', which is absent."""
+    repo = Path(__file__).resolve().parent.parent
+    source = (repo / "ml" / "train_modernbert.py").read_text()
+    assert "evaluate_modernbert" not in source
+    assert not (repo / "ml" / "evaluate_modernbert.py").exists()
+
+
+def test_by_length_uses_positional_masks() -> None:
+    """get_indexer on a non-unique index can return -1; positional masks cannot.
+
+    Checked on executable lines only: the explanation of the old bug mentions
+    get_indexer in a comment, and matching that would fail on the fix itself.
+    """
+    lines = (
+        Path(__file__).resolve().parent.parent / "ml" / "train_modernbert.py"
+    ).read_text().splitlines()
+    code = [ln for ln in lines if not ln.lstrip().startswith("#")]
+    assert any("np.flatnonzero(bucket_values == label_value)" in ln for ln in code)
+    assert not any("get_indexer" in ln for ln in code)

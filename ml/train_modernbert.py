@@ -277,8 +277,15 @@ def main(argv: list[str] | None = None) -> int:
     )
     trainer.train()
     args.out.mkdir(parents=True, exist_ok=True)
-    model.save_pretrained(args.out)
+    # Save the model Trainer actually trained. With fp16 the Trainer keeps a fp16
+    # copy for forward passes and updates the fp32 master separately, so saving the
+    # original `model` object can write untrained weights; the artefacts must match
+    # the numbers reported below.
+    trained = trainer.model
+    trained.config.reference_compile = False
+    trained.save_pretrained(args.out)
     tokenizer.save_pretrained(args.out)
+    model = trained
 
     # Honest evaluation: in-domain val AND the out-of-domain split, reported separately.
     # test_ood is 90% human, so raw accuracy there is meaningless without balanced
@@ -290,6 +297,16 @@ def main(argv: list[str] | None = None) -> int:
         "epochs": args.epochs,
         "train_rows": len(train_frame),
         "labels": LABELS,
+        # A --limit run sees a random subset of train while still evaluating the full
+        # val and OOD splits, so its numbers measure plumbing, not generalisation.
+        # Record it in the artefact so no one can quote one as a result later.
+        "limited": bool(args.limit),
+        "note": (
+            f"PLUMBING CHECK ONLY: trained on {len(train_frame)} rows via --limit. "
+            "Not a result."
+            if args.limit
+            else "full training run"
+        ),
         "splits": {},
     }
 
@@ -316,9 +333,12 @@ def main(argv: list[str] | None = None) -> int:
         buckets = pd.cut(frame["text"].str.split().str.len(), [0, 100, 200, 400, 100_000],
                          labels=["<100", "100-200", "200-400", "400+"])
         by_len = {}
-        for label_value, group in frame.groupby(buckets, observed=True):
-            mask = group.index.to_numpy()
-            idx = frame.index.get_indexer(mask)
+        # Positional boolean mask: frame.groupby gives labels, not positions, and
+        # get_indexer on a non-unique index returns -1 for misses, which would
+        # silently index from the end of the array.
+        bucket_values = buckets.to_numpy()
+        for label_value in pd.unique(bucket_values[pd.notna(bucket_values)]):
+            idx = np.flatnonzero(bucket_values == label_value)
             sub_probs, sub_y = probs[idx], y[idx]
             if len(sub_y) < 10:
                 continue
@@ -331,16 +351,22 @@ def main(argv: list[str] | None = None) -> int:
         report["splits"][name] = entry  # type: ignore[index]
 
     evaluate(val_frame, "val_in_domain")
-    if not args.limit:
-        ood_frame = read(args.ood)
-        evaluate(ood_frame, "test_ood")
+    # Always evaluate OOD, including --limit smoke runs. It is encode-only (~1 min for
+    # 7484 rows) and test_ood is where this project's known failure lives: 2.4% human
+    # FPR at 60-100 words rising to 82.1% at 400+. Omitting it left a smoke report
+    # that looked like a success because the split that exposes the defect was absent.
+    if args.ood.exists():
+        evaluate(read(args.ood), "test_ood")
+    else:
+        print(f"! {args.ood} missing - no out-of-domain numbers in this report")
 
     (args.out / "eval_report.json").write_text(json.dumps(report, indent=2) + "\n")
 
     print("\n=== fine-tune report ===")
     print(json.dumps(report["splits"], indent=2))
     print(f"\nsaved to {args.out}")
-    print("Next: python ml/evaluate_modernbert.py --model-dir", args.out)
+    print("artefacts: model.safetensors, tokenizer files, eval_report.json")
+    print("A --limit run trains on a subset and is a plumbing check, not a result.")
     return 0
 
 
