@@ -439,3 +439,35 @@ def test_ppl_bundle_loads_without_the_api_package_on_sys_path(tmp_path: Path) ->
     assert result.returncode == 0, result.stderr[-3000:]
     payload = json.loads(result.stdout.strip().splitlines()[-1])
     assert payload["ppl"] is True, "the perplexity component must load in the single-file layout"
+
+
+def test_metrics_reports_the_thresholds_in_force() -> None:
+    """The metrics page must not present a band that was deliberately not shipped.
+
+    ``fast`` runs a different band from the one ``ml/tune_thresholds.py`` picked; that
+    tuned band is measurably worse than lite out-of-domain. Reporting it as "the
+    thresholds" would tell the reader the site decides verdicts with numbers it does not
+    use, so the deployed band is what appears, with the rejected one beside it.
+    """
+    sys.path.insert(0, str(API))
+    from _lib import core
+
+    thresholds = core.artifacts().thresholds or {}
+    deployed = thresholds.get("fast_deployed")
+    if not deployed:
+        pytest.skip("no fast_deployed band in this bundle")
+
+    generated = (API / "metrics.py").read_text()
+    assert "fast_deployed" in generated, "the generated function must read the shipped band"
+
+    spec = importlib.util.spec_from_file_location("metrics_probe", API / "metrics.py")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules["metrics_probe"] = module
+    spec.loader.exec_module(module)
+    reported = module.BODY["thresholds"]
+
+    assert reported["fast"]["t_ai"] == pytest.approx(deployed["t_ai"], abs=1e-9)
+    assert reported["fast"]["t_human"] == pytest.approx(deployed["t_human"], abs=1e-9)
+    assert reported["fast"]["measured"]["accuracy"] > reported["fast"]["rejected_tuned_band"]["measured"]["accuracy"]
+    # The frontend reads the lite band at the top level; that shape must survive.
+    assert reported["t_ai"] == pytest.approx(thresholds["lite"]["t_ai"], abs=1e-9)

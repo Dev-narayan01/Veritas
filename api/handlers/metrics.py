@@ -80,9 +80,35 @@ def _load() -> dict:
 
 
 def _thresholds(directory) -> dict | None:
+    """The bands actually in force, per mode.
+
+    Only ``lite`` used to be returned, keyed at the top level. Now that ``fast`` is deployed
+    it runs a different band, and the metrics page must not show the tuner's in-domain band
+    (0.9308/0.9784) as if it were live: that band is the one measured to be worse than lite
+    out-of-domain and was deliberately not shipped. ``fast_deployed`` is what decides a
+    verdict, so that is what this reports, alongside the rejected band for comparison.
+    """
     try:
         data = json.loads((directory / "thresholds.json").read_text())
-        return data.get("lite") or None
+        lite = data.get("lite") or None
+        deployed = data.get("fast_deployed") or None
+        rejected = data.get("fast_rejected_tuned") or None
+        if deployed:
+            fast = {
+                "t_human": deployed.get("t_human"),
+                "t_ai": deployed.get("t_ai"),
+                "source": "test_ood (conservative: high precision, low coverage)",
+                "measured": deployed.get("measured"),
+                "rejected_tuned_band": rejected,
+            }
+        else:
+            fast = data.get("fast") or None
+        return {
+            "lite": lite,
+            "fast": fast,
+            # keep the old shape readable for the frontend, which reads t_ai/t_human here
+            **(lite or {}),
+        }
     except Exception:  # noqa: BLE001
         return None
 
