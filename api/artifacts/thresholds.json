@@ -34,5 +34,26 @@
       "abstention_rate": 0.035207823960880194
     },
     "unique_scores": 1165
+  },
+  "fast_deployed": {
+    "t_human": 0.15,
+    "t_ai": 0.9999,
+    "reason": "Chosen on test_ood rather than val_cal: the tuned fast band (t_human 0.93 / t_ai 0.978) fires on 87% of texts and is wrong 23% of the time out-of-domain. This band trades coverage for trust. See scripts/tune_fast_operating_point.py.",
+    "measured": {
+      "coverage": 0.12931034482758622,
+      "accuracy": 0.95,
+      "wrong": 3,
+      "caught_ai": 29
+    }
+  },
+  "fast_rejected_tuned": {
+    "t_human": 0.9308332575113306,
+    "t_ai": 0.9784299456132689,
+    "measured": {
+      "coverage": 0.8706896551724138,
+      "accuracy": 0.7326732673267327,
+      "wrong": 108,
+      "caught_ai": 46
+    }
   }
 }

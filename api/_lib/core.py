@@ -65,6 +65,211 @@ class _Classical:
         return self.classifier.predict_proba(matrix)[:, 1]
 
 
+class _PplBundle:
+    """Perplexity component, torch-free, matching ``app.detector.perplexity``.
+
+    Only the trigram path is implemented: the GPT-2 backend needs weights that a
+    serverless bundle cannot carry, and the artifact was trained with ``backend=ngram_lm``
+    regardless. The feature computation below is a line-for-line port, and
+    ``scripts/verify_fast_mode.py`` compares it against the original module on real rows.
+
+    Definable here rather than imported, because a function ships as one file.
+    """
+
+    def __init__(
+        self,
+        classifier: Any = None,
+        feature_names: list[str] | None = None,
+        style_reference: dict[str, Any] | None = None,
+        order: int = 3,
+        vocab_size: int = 0,
+        total_tokens: int = 0,
+    ) -> None:
+        self.classifier = classifier
+        self.feature_names = list(feature_names or [])
+        self.style_reference = dict(style_reference or {})
+        self.order = order
+        self.vocab_size = vocab_size
+        self.total_tokens = total_tokens
+        self.counts: dict[tuple[str, ...], dict[str, int]] = {}
+        self.unigram: dict[str, int] = {}
+
+    # ---- language model -------------------------------------------------
+    def attach_counts(self, counts: dict[tuple[str, ...], dict[str, int]]) -> None:
+        self.counts = counts
+        self.unigram = counts.get((), {})
+
+    def _counter(self, context: tuple[str, ...]) -> dict[str, int]:
+        for n in range(len(context), 0, -1):
+            counter = self.counts.get(tuple(context[-n:]))
+            if counter:
+                return counter
+        return {}
+
+    def distribution(self, context: tuple[str, ...]) -> dict[str, float]:
+        counter = self._counter(context)
+        total = sum(counter.values())
+        if not counter:
+            return {"<unk>": 1.0}
+        alpha = 0.1
+        denom = total + alpha * self.vocab_size
+        top = sorted(counter.items(), key=lambda kv: kv[1], reverse=True)[:200]
+        return {token: (count + alpha) / denom for token, count in top}
+
+    def token_logprob(self, token: str, context: tuple[str, ...]) -> float:
+        counter = self._counter(context)
+        if counter:
+            total = sum(counter.values())
+            if counter.get(token):
+                return math.log(counter[token] / total)
+        floor = 1.0 / (max(1, self.total_tokens) * 100)
+        prob = (self.unigram.get(token, 0) / max(1, self.total_tokens)) if self.unigram else floor
+        return math.log(max(prob, floor) * 0.4)
+
+    def rank_percentile(self, token: str, context: tuple[str, ...]) -> float:
+        ordered = sorted(self.distribution(context).items(), key=lambda kv: kv[1], reverse=True)
+        for rank, (candidate, _) in enumerate(ordered):
+            if candidate == token:
+                return rank / max(1, len(ordered))
+        return 1.0
+
+    # ---- features -------------------------------------------------------
+    def features(self, text: str) -> dict[str, float]:
+        feats = _style_features(text)
+        feats.update(self._ngram_features(text))
+        return feats
+
+    def _ngram_features(self, text: str, max_tokens: int = 512) -> dict[str, float]:
+        tokens = text.split()[:max_tokens]
+        if len(tokens) < 2:
+            return _summarise_lm([], [], [])
+        logprobs: list[float] = []
+        ranks: list[float] = []
+        entropies: list[float] = []
+        history: list[str] = []
+        for token in tokens:
+            context = tuple(history[-(self.order - 1) :]) if self.order > 1 else ()
+            logprobs.append(self.token_logprob(token, context))
+            ranks.append(self.rank_percentile(token, context))
+            entropies.append(-sum(p * math.log(p) for p in self.distribution(context).values() if p > 0))
+            history.append(token)
+        return _summarise_lm(logprobs, entropies, ranks)
+
+    def predict_proba(self, texts: list[str]) -> Any:
+        import numpy as np
+
+        rows = []
+        for text in texts:
+            feats = self.features(text)
+            rows.append([float(feats.get(name, 0.0)) for name in self.feature_names])
+        return self.classifier.predict_proba(np.asarray(rows, dtype=np.float64))[:, 1]
+
+
+_STOPWORDS = frozenset(
+    """a about above after again against all am an and any are aren't as at be because
+    been before being below between both but by can't cannot could couldn't did didn't
+    do does doesn't doing don't down during each few for from further had hadn't has
+    hasn't have haven't having he he'd he'll he's her here here's hers herself him
+    himself his how how's i i'd i'll i'm i've if in into is isn't it it's its itself
+    let's me more most mustn't my myself no nor not of off on once only or other ought
+    our ours ourselves out over own same shan't she she'd she'll she's should shouldn't
+    so some such than that that's the their theirs them themselves then there there's
+    these they they'd they'll they're they've this those through to too under until up
+    very was wasn't we we'd we'll we're we've were weren't what what's when when's where
+    where's which while who who's whom why why's with won't would wouldn't you you'd
+    you'll you're you've your yours yourself yourselves""".split()
+)
+_CONTRACTION_RE = re.compile(r"\b\w+(?:'|’)t\b|\b\w+'(?:s|re|ve|ll|d|m)\b", re.IGNORECASE)
+_WORD_RE = re.compile(r"[A-Za-z']+")
+_FUNCTION_PUNCT = set(".,;:!?'\"()[]-")
+
+
+def _safe_div(num: float, den: float) -> float:
+    return float(num) / float(den) if den else 0.0
+
+
+_SENTENCE_END = re.compile(r"""(?<=[.!?])["')\]]*\s+(?=["'(\[]?[A-Z0-9])""")
+_ABBREVIATIONS = {
+    "mr", "mrs", "ms", "dr", "prof", "sr", "jr", "st", "vs", "etc", "e.g", "i.e",
+    "fig", "eq", "no", "vol", "pp", "al", "inc", "ltd", "co", "approx", "dept",
+}
+
+
+def _split_sentences_like_training(text: str) -> list[str]:
+    """Port of ``app.text.segment._regex_split``.
+
+    The style features are counts over sentences, so the splitter has to agree with the
+    one used at training time. NLTK's Punkt is unavailable in a serverless bundle, which
+    is fine: the training run fell back to this same regex path (the pip environment had
+    no ``punkt`` either), so the two match exactly. Abbreviation guards matter - without
+    them "Dr. Smith" becomes two sentences and ``sentence_len_mean`` drifts.
+    """
+    spans: list[tuple[int, int]] = []
+    start = 0
+    for match in _SENTENCE_END.finditer(text):
+        candidate = text[start : match.start()]
+        tail = candidate.rstrip().rsplit(" ", 1)[-1].rstrip(".").lower()
+        if tail in _ABBREVIATIONS or (len(tail) == 1 and tail.isalpha()):
+            continue
+        spans.append((start, match.start()))
+        start = match.end()
+    if start < len(text):
+        spans.append((start, len(text)))
+    return [piece for piece in (text[a:b].strip() for a, b in spans) if piece]
+
+
+def _style_features(text: str) -> dict[str, float]:
+    """Port of ``app.detector.features.compute_style`` (ten interpretable measures)."""
+    sentences = _split_sentences_like_training(text) or []
+    words = _WORD_RE.findall(text.lower())
+    total = max(1, len(words))
+    lengths = [len(sentence.split()) for sentence in sentences] or [total]
+    mean_len = _safe_div(sum(lengths), len(lengths))
+    std_len = math.sqrt(_safe_div(sum((x - mean_len) ** 2 for x in lengths), len(lengths)))
+    counts: dict[str, int] = {}
+    for word in words:
+        counts[word] = counts.get(word, 0) + 1
+    repeated = sum(c for w, c in counts.items() if c > 2 and w not in _STOPWORDS)
+    return {
+        "sentence_len_mean": mean_len,
+        "sentence_len_std": std_len,
+        "word_len_mean": _safe_div(sum(len(w) for w in words), total),
+        "type_token_ratio": _safe_div(len(counts), total),
+        "punctuation_rate": _safe_div(sum(1 for c in text if c in _FUNCTION_PUNCT), max(1, len(text))),
+        "stopword_ratio": _safe_div(sum(1 for w in words if w in _STOPWORDS), total),
+        "repetition_rate": _safe_div(repeated, total),
+        "contraction_rate": _safe_div(len(_CONTRACTION_RE.findall(text)), total),
+        "long_word_ratio": _safe_div(sum(1 for w in words if len(w) >= 8), total),
+        "sentence_count": float(len(sentences)),
+    }
+
+
+def _summarise_lm(logprobs: list[float], entropies: list[float], ranks: list[float]) -> dict[str, float]:
+    """Port of ``_summarise_lm``; the same six summary features."""
+    if not logprobs:
+        return {
+            "lm_mean_logprob": 0.0,
+            "lm_std_logprob": 0.0,
+            "burstiness": 0.0,
+            "mean_rank_pct": 0.5,
+            "top10_hit_rate": 0.0,
+            "entropy_mean": 0.0,
+        }
+    mean = sum(logprobs) / len(logprobs)
+    var = sum((x - mean) ** 2 for x in logprobs) / len(logprobs)
+    diffs = [logprobs[i + 1] - logprobs[i] for i in range(len(logprobs) - 1)]
+    d_mean = sum(diffs) / len(diffs) if diffs else 0.0
+    d_var = sum((d - d_mean) ** 2 for d in diffs) / len(diffs) if diffs else 0.0
+    return {
+        "lm_mean_logprob": mean,
+        "lm_std_logprob": math.sqrt(var),
+        "burstiness": math.sqrt(d_var),
+        "mean_rank_pct": sum(ranks) / len(ranks),
+        "top10_hit_rate": sum(1 for r in ranks if r <= 0.10) / len(ranks),
+        "entropy_mean": sum(entropies) / len(entropies),
+    }
+
+
 @dataclass
 class _PlattScaler:
     """Duck-typed ``app.detector.calibration.PlattScaler`` (two floats)."""
@@ -148,11 +353,18 @@ class LiteArtifacts:
     model: Any = None
     thresholds: dict[str, Any] | None = None
     stacker: Any = None
+    ppl: Any = None
+    stacker_fast: Any = None
     error: str | None = None
 
     @property
     def available(self) -> bool:
         return self.model is not None and self.thresholds is not None
+
+    @property
+    def fast_available(self) -> bool:
+        """``fast`` needs the perplexity component *and* its own fitted stacker."""
+        return self.available and self.ppl is not None and self.stacker_fast is not None
 
 
 def _install_pickle_stub() -> None:
@@ -247,15 +459,56 @@ def load_lite_artifacts() -> LiteArtifacts:
         if vectorizer is None or classifier is None:
             return LiteArtifacts(directory, error="classical.pkl does not contain a vectorizer/classifier pair")
         model = _Classical(vectorizer, classifier)
-        stacker = None
-        stacker_path = directory / "stacker_lite.pkl"
-        if stacker_path.exists():
-            candidate = joblib.load(stacker_path)
-            if getattr(candidate, "classifier", None) is not None:
-                stacker = candidate
+        stacker = _load_pickle(directory / "stacker_lite.pkl")
+        stacker_fast = _load_pickle(directory / "stacker_fast.pkl")
+        ppl = _load_ppl(directory)
     except Exception as exc:  # noqa: BLE001 - a corrupt/missing bundle is a runtime state
         return LiteArtifacts(directory, error=f"lite artifacts failed to load: {exc}")
-    return LiteArtifacts(directory, model=model, thresholds=thresholds, stacker=stacker)
+    return LiteArtifacts(
+        directory,
+        model=model,
+        thresholds=thresholds,
+        stacker=stacker,
+        ppl=ppl,
+        stacker_fast=stacker_fast,
+    )
+
+
+def _load_pickle(path: Path) -> Any:
+    """Load an optional artifact; a missing or corrupt one simply means "not available"."""
+    if not path.exists():
+        return None
+    try:
+        import joblib
+
+        candidate = joblib.load(path)
+        return candidate if getattr(candidate, "classifier", None) is not None else None
+    except Exception:  # noqa: BLE001 - reported through the health payload instead
+        return None
+
+
+def _load_ppl(directory: Path) -> Any:
+    """Load the perplexity component: pickled classifier + gzipped trigram counts.
+
+    Kept separate from ``classical`` so a missing/corrupt ppl bundle degrades ``fast``
+    alone and never takes ``lite`` down with it.
+    """
+    bundle_path = directory / "ppl_bundle.pkl"
+    counts_path = directory / "ppl_lm.json.gz"
+    if not bundle_path.exists() or not counts_path.exists():
+        return None
+    try:
+        import gzip
+        import pickle
+
+        with open(bundle_path, "rb") as handle:
+            bundle = pickle.load(handle)
+        with gzip.open(counts_path, "rb") as handle:
+            payload = json.loads(handle.read())
+        bundle.attach_counts({tuple(json.loads(key)): value for key, value in payload["counts"].items()})
+        return bundle
+    except Exception:  # noqa: BLE001
+        return None
 
 
 _ARTIFACTS: LiteArtifacts | None = None
@@ -269,18 +522,23 @@ def artifacts() -> LiteArtifacts:
     return _ARTIFACTS
 
 
-def _lite_thresholds(thresholds: dict[str, Any] | None) -> dict[str, Any]:
-    """Read the ``lite`` entry from ``thresholds.json``.
+def _mode_thresholds(thresholds: dict[str, Any] | None, mode: str) -> dict[str, Any]:
+    """Read one mode's entry from ``thresholds.json``.
 
     The file written by ``ml/tune_thresholds.py`` is keyed by mode at the top level;
     ``modes`` is accepted too so an older bundle keeps working.
     """
     if not thresholds:
         return {}
-    entry = thresholds.get("lite")
+    entry = thresholds.get(mode)
     if entry is None:
-        entry = (thresholds.get("modes") or {}).get("lite")
+        entry = (thresholds.get("modes") or {}).get(mode)
     return entry if isinstance(entry, dict) else {}
+
+
+def _lite_thresholds(thresholds: dict[str, Any] | None) -> dict[str, Any]:
+    """The ``lite`` entry; kept as a named helper because most call sites want it."""
+    return _mode_thresholds(thresholds, "lite")
 
 
 def _is_fitted(entry: dict[str, Any]) -> bool:
@@ -310,8 +568,10 @@ def health() -> dict[str, Any]:
         },
         {
             "mode": "fast",
-            "available": False,
-            "reason": "Lite deployment: the perplexity component and its stacker live on the full server",
+            "available": bundle.fast_available and _is_fitted(_mode_thresholds(bundle.thresholds, "fast")),
+            "reason": None
+            if bundle.fast_available
+            else "Lite deployment: the perplexity component or its stacker is not bundled here",
             "components": ["classical", "ppl_gpt2"],
         },
         {
@@ -333,7 +593,7 @@ def health() -> dict[str, Any]:
         "modes": modes,
         "models_loaded": {
             "classical": bundle.model is not None,
-            "ppl_gpt2": False,
+            "ppl_gpt2": bundle.ppl is not None,
             "transformer": False,
             "binoculars": False,
             "fast_detectgpt": False,
@@ -346,9 +606,10 @@ def health() -> dict[str, Any]:
         "artifact_notes": [bundle.error]
         if bundle.error
         else [
-            "lite bundle: classical + "
-            + ("calibrated stacker + " if bundle.stacker is not None else "")
-            + "thresholds only"
+            "lite bundle: classical"
+            + (" + perplexity (ngram)" if bundle.ppl is not None else "")
+            + (" + calibrated stacker" if bundle.stacker is not None else "")
+            + " + thresholds"
         ],
         "data_source": "hc3",
         "default_mode": "lite",
@@ -399,28 +660,44 @@ def _padded(text: str, words: int) -> dict[str, Any]:
     }
 
 
-def score(text: str) -> dict[str, Any]:
-    """Run the classical detector and assemble a full result the UI can render.
+def score(text: str, mode: str = "lite") -> dict[str, Any]:
+    """Score one text and assemble a full result the UI can render.
 
-    The shape mirrors ``backend/app/schemas.py`` so the same React pages work; the
-    difference is that ``plagiarism`` is null, ``sentences``/``tokens``/``segments`` are
-    empty, and ``exit_notes`` states the limitations.
+    ``mode`` is ``lite`` (classical only) or ``fast`` (classical + perplexity). ``fast``
+    degrades to ``lite`` when the perplexity bundle is absent, and says so in
+    ``components_unavailable`` and ``mode_used`` - it never silently pretends to have run
+    a component it does not have.
     """
     cleaned = re.sub(r"\s+", " ", text).strip()
     words = len(cleaned.split())
     bundle = artifacts()
     thresholds = _lite_thresholds(bundle.thresholds)
     fitted = bundle.available and _is_fitted(thresholds)
+    requested = "fast" if str(mode).lower() == "fast" else "lite"
+    use_fast = requested == "fast" and bundle.fast_available
+    effective = "fast" if use_fast else "lite"
 
+    unavailable = [
+        {"component": "binoculars", "reason": "Lite deployment: zero-shot components are not bundled here"},
+        {"component": "fast_detectgpt", "reason": "Lite deployment: zero-shot components are not bundled here"},
+    ]
+    if not use_fast:
+        unavailable.insert(
+            0,
+            {
+                "component": "ppl_gpt2",
+                "reason": (
+                    "Lite deployment: the perplexity component is not bundled here"
+                    if requested == "lite"
+                    else "The perplexity bundle is missing, so 'fast' fell back to 'lite'"
+                ),
+            },
+        )
     ai: dict[str, Any] = {
-        "mode_requested": "lite",
-        "mode_used": "lite",
+        "mode_requested": requested,
+        "mode_used": effective,
         "components_run": [],
-        "components_unavailable": [
-            {"component": "ppl_gpt2", "reason": "Lite deployment: the language-model component is not bundled here"},
-            {"component": "binoculars", "reason": "Lite deployment: zero-shot components are not bundled here"},
-            {"component": "fast_detectgpt", "reason": "Lite deployment: zero-shot components are not bundled here"},
-        ],
+        "components_unavailable": unavailable,
         "probability": None,
         "ci_low": None,
         "ci_high": None,
@@ -456,17 +733,34 @@ def score(text: str) -> dict[str, Any]:
     # the artifact and were tuned on the same calibrated scores, so mixing them with a raw
     # component probability would make the bands meaningless.
     raw = float(bundle.model.predict_proba([cleaned])[0])
-    stacker = bundle.stacker
+    ppl_probability = None
+    if use_fast:
+        ppl_probability = float(bundle.ppl.predict_proba([cleaned])[0])
+        stacker = bundle.stacker_fast
+    else:
+        stacker = bundle.stacker
     if stacker is not None and stacker.thresholds is not None:
         t_human = float(stacker.thresholds.t_human)
         t_ai = float(stacker.thresholds.t_ai)
-        probability = float(stacker.probability({"log_word_count": math.log(max(1, words)),
-                                                 "logit_classical": _logit(raw)}))
+        if use_fast:
+            # ``fast`` ships a band chosen on the OOD split, because the band tuner's
+            # 1%-FPR target on val_cal transfers badly once the perplexity feature is
+            # added. See scripts/tune_fast_operating_point.py; the artifact records both
+            # the shipped and the rejected band so this cannot be "fixed" by accident.
+            deployed = _mode_thresholds(bundle.thresholds, "fast_deployed")
+            if _is_fitted(deployed):
+                t_human = float(deployed["t_human"])
+                t_ai = float(deployed["t_ai"])
+        features = {"log_word_count": math.log(max(1, words)), "logit_classical": _logit(raw)}
+        if ppl_probability is not None:
+            features["logit_ppl_gpt2"] = _logit(ppl_probability)
+        probability = float(stacker.probability(features))
     else:
         t_human = float(thresholds["t_human"])
         t_ai = float(thresholds["t_ai"])
         probability = raw
     calibrated = stacker is not None and stacker.thresholds is not None
+    components_run = ["classical"] + (["ppl_gpt2"] if ppl_probability is not None else [])
     if probability <= t_human:
         verdict = "likely_human"
     elif probability >= t_ai:
@@ -478,22 +772,16 @@ def score(text: str) -> dict[str, Any]:
     width = 1.96 * math.sqrt(max(probability * (1 - probability), 1e-6) / max(words, 1))
     ai.update(
         {
-            "components_run": ["classical"],
+            "components_run": components_run,
             "probability": round(probability, 6),
             "ci_low": round(max(0.0, probability - width), 6),
             "ci_high": round(min(1.0, probability + width), 6),
             "verdict": verdict,
-            "band_collapsed": bool(thresholds.get("band_collapsed")),
+            "band_collapsed": bool(getattr(stacker.thresholds, "band_collapsed", False))
+            if stacker is not None and stacker.thresholds is not None
+            else bool(thresholds.get("band_collapsed")),
             "low_confidence": words < 120,
-            "components": [
-                {
-                    "name": "classical",
-                    "probability": round(probability, 6),
-                    "raw": {"component_probability": round(raw, 6), "stacked": calibrated},
-                    "available": True,
-                    "reason": None,
-                }
-            ],
+            "components": _component_rows(raw, ppl_probability, probability, calibrated),
             "explanation": {
                 "source": "rule_based",
                 "text": (
@@ -506,6 +794,44 @@ def score(text: str) -> dict[str, Any]:
         }
     )
     return _envelope(_padded(cleaned, words), ai)
+
+
+def _component_rows(raw: float, ppl: float | None, stacked: float, calibrated: bool) -> list[dict[str, Any]]:
+    """Per-component evidence, including the stacked result so nothing is misattributed.
+
+    ``probability`` on the stacked row is the calibrated value; the raw component
+    probabilities are kept beside it, because a reader must be able to see that the
+    number they are shown is not simply ``classical``'s own output.
+    """
+    rows: list[dict[str, Any]] = [
+        {
+            "name": "classical",
+            "probability": round(raw, 6),
+            "raw": {"stacked": calibrated},
+            "available": True,
+            "reason": None,
+        }
+    ]
+    if ppl is not None:
+        rows.append(
+            {
+                "name": "ppl_gpt2",
+                "probability": round(ppl, 6),
+                "raw": {"backend": "ngram_lm"},
+                "available": True,
+                "reason": None,
+            }
+        )
+    rows.append(
+        {
+            "name": "stacked" if calibrated else "ensemble",
+            "probability": round(stacked, 6),
+            "raw": {"calibrated": calibrated, "platt": calibrated},
+            "available": True,
+            "reason": None,
+        }
+    )
+    return rows
 
 
 def _envelope(document: dict[str, Any], ai: dict[str, Any]) -> dict[str, Any]:

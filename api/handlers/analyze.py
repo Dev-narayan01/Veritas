@@ -8,10 +8,12 @@ rather than silently doing less than the user asked for.
 from __future__ import annotations
 
 import json
+import traceback
 from http.server import BaseHTTPRequestHandler
 
 
 MAX_BODY_BYTES = 200_000
+SUPPORTED_MODES = ("lite", "fast")
 
 
 def _error(status: int, code: str, message: str) -> tuple[int, bytes]:
@@ -47,16 +49,29 @@ class handler(BaseHTTPRequestHandler):  # noqa: N801 - Vercel's expected class n
                 "Lite mode analyses pasted text only. Upload files on the full server, or paste text here.",
             )
             return self._send(status, payload)
-        requested = str(body.get("mode") or "lite")
-        if requested != "lite":
+        requested = str(body.get("mode") or "lite").lower()
+        if requested not in SUPPORTED_MODES:
             status, payload = _error(
                 422,
                 "mode_unavailable",
-                f"Mode '{requested}' needs the full server. This deployment can only run 'lite'.",
+                f"Mode '{requested}' needs the full server. This deployment runs "
+                f"{' and '.join(repr(m) for m in SUPPORTED_MODES)} only.",
             )
             return self._send(status, payload)
+        if requested == "fast" and not artifacts().fast_available:
+            # Not an error: ``score`` degrades to lite and mode_used reports it. Refusing
+            # outright would be worse than doing the analysis with the components present.
+            pass
 
-        result = score(text)
+        try:
+            result = score(text, mode=requested)
+        except Exception:  # noqa: BLE001 - a runtime failure must be readable, not a 500
+            status, payload = _error(
+                500,
+                "analysis_failed",
+                "The analysis failed on this deployment: " + traceback.format_exc(limit=3),
+            )
+            return self._send(status, payload)
         result["lite_limitations"] = LITE_LIMITATIONS
         self._send(200, json.dumps(result).encode())
 
