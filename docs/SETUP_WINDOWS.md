@@ -215,14 +215,74 @@ Your options:
 | Turn SAC off | no, and **it cannot be turned back on without reinstalling Windows** | Windows Security ▸ App and browser control |
 | `--allow-cpu` | yes | hours instead of minutes; fine for a 200-row smoke test |
 
-Under WSL2 the Windows NVIDIA driver provides CUDA to Linux, so `nvidia-smi` works inside
-WSL and PyTorch's Linux wheel (which is the CUDA build on PyPI, signed-and-not-checked
-anyway) loads normally. This is the option that keeps the security feature.
-
 If the machine is managed by an employer or school, the policy is theirs; ask for an
 exclusion rather than working around it.
 
-Then confirm ModernBERT can load at all (this downloads ~600 MB once):
+### 6c. WSL2 — the option that keeps Smart App Control on
+
+Linux has no Smart App Control, and the PyPI wheel there is a different artifact:
+
+| wheel | size | CUDA |
+|---|---|---|
+| `torch-2.15.0-cp312-cp312-manylinux_2_28_x86_64.whl` | **539 MB** | yes |
+| `torch-2.15.0-cp312-cp312-win_amd64.whl` | **127 MB** | no |
+
+So on Linux a plain `python -m pip install torch` gives you the GPU build with no index
+URL and no 2.6 GB download. WSL2 also gets CUDA from the Windows driver, so there is no
+driver to install inside Linux.
+
+Check WSL is present, then open it:
+
+```powershell
+wsl --status
+wsl
+```
+
+Inside Linux, **clone into the Linux filesystem, not `/mnt/c`**. `/mnt/c` works but goes
+through a translation layer that makes torch imports extremely slow and stalls
+dataloading. It is the single biggest performance mistake available here.
+
+```bash
+sudo apt update && sudo apt install -y python3 python3-venv git
+git clone https://github.com/Dev-narayan01/Veritas.git ~/Veritas
+cd ~/Veritas
+bash scripts/setup_wsl.sh
+```
+
+`scripts/setup_wsl.sh` checks the GPU passthrough first (installing 539 MB of torch
+before discovering the driver is not passing the GPU through wastes the download),
+creates the venv, installs in the right order, and verifies CUDA at the end.
+
+Point the caches at Linux storage — `D:` is a Windows path and would be slow:
+
+```bash
+export HF_HOME="$HOME/hf_cache"
+```
+
+Add that to `~/.bashrc` if you want it to persist across shells.
+
+**Files already built on Windows** (`data/processed/*.parquet`) are reachable at
+`/mnt/c/Users/DEV NARAYAN/Downloads/llm_final/Veritas/data/processed/` — copy them in
+rather than rebuilding the RAID download:
+
+```bash
+cp -r "/mnt/c/Users/DEV NARAYAN/Downloads/llm_final/Veritas/data/processed" ~/Veritas/data/
+```
+
+WSL2 has no systemd by default and its default memory cap is 50% of Windows RAM — on an
+8 GB machine that is 4 GB, which is workable for this model but tight. Cap it explicitly
+in `C:\Users\DEV NARAYAN\.wslconfig` if you see the kernel OOM-killer:
+
+```ini
+[wsl2]
+memory=6GB
+swap=8GB
+```
+
+Restart with `wsl --shutdown` after editing that file.
+
+Then confirm ModernBERT can load at all (~600 MB download, once). In WSL use the bash
+spelling of the same thing:
 
 ```powershell
 python -c "
