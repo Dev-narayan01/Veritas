@@ -352,13 +352,48 @@ def cap_per_source(records: list[Record], cap: int) -> list[Record]:
     return out
 
 
-def split_records(records: list[Record], cfg: RunConfig) -> dict[str, list[Record]]:
-    """Group-disjoint train/val_stack/val_cal/test plus the OOD holdout."""
-    ood = [
+def split_records(
+    records: list[Record], cfg: RunConfig, mix_formal: float = 0.0
+) -> dict[str, list[Record]]:
+    """Group-disjoint train/val_stack/val_cal/test plus the OOD holdout.
+
+    ``mix_formal`` decides how much formal-academic human text is held out. It defaults
+    to 0.0, which is the original behaviour: every arXiv abstract goes to ``test_ood``
+    and none is ever trained on. That produced a measurable pathology -- a model with
+    0.9885 balanced accuracy in-domain and 99.0% human false-positive rate on
+    ``test_ood``, because it had never seen formal prose and treated it as machine text.
+
+    At 0.5, half the arXiv abstracts are routed into the in-domain splits (so training
+    sees formal human writing) and half stay held out. The two halves are disjoint by
+    construction, and each abstract carries its own group id, so the existing
+    group-disjointness guarantee still holds.
+
+    The cost is a changed meaning for ``test_ood``: ``formal_academic`` becomes a
+    *seen* domain with *unseen* documents. Reported numbers must say so.
+    """
+    formal = [r for r in records if r.source == OOD_FORMAL_SOURCE]
+    other_ood = [
         r for r in records
-        if r.domain == OOD_DOMAIN or r.source == OOD_FORMAL_SOURCE or r.domain == "mage_heldout"
+        if r.domain == OOD_DOMAIN or r.domain == "mage_heldout"
     ]
-    in_domain = [r for r in records if r not in ood]
+    if mix_formal > 0.0 and formal:
+        # Deterministic so a rebuild is reproducible and the halves never overlap.
+        rng = random.Random(43)
+        ordered = sorted(formal, key=lambda r: r.id)
+        rng.shuffle(ordered)
+        keep_out = int(len(ordered) * min(max(mix_formal, 0.0), 1.0))
+        held_out, moved_in = ordered[:keep_out], ordered[keep_out:]
+        log.info(
+            "formal mix: %s arXiv rows moved into train/val/test, %s kept out of domain",
+            len(moved_in), len(held_out),
+        )
+        ood = held_out + other_ood
+        ood_ids = {r.id for r in ood}
+        in_domain = [r for r in records if r.id not in ood_ids]
+    else:
+        ood = formal + other_ood
+        ood_ids = {r.id for r in ood}
+        in_domain = [r for r in records if r.id not in ood_ids]
 
     groups: dict[str, list[Record]] = {}
     for record in in_domain:
@@ -446,6 +481,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--smoke", action="store_true", help="tiny CPU run to test correctness")
     parser.add_argument("--full", action="store_true", help="Kaggle-scale run")
     parser.add_argument("--force", action="store_true", help="rebuild even if the splits exist")
+    parser.add_argument(
+        "--mix-formal", type=float, default=0.0,
+        help="share of arXiv formal-human rows held out instead of all of them; "
+             "0 = original behaviour (nothing formal in train), 0.5 = half in, half out",
+    )
     args = parser.parse_args(argv)
     cfg = RunConfig(smoke=args.smoke, full=args.full)
     prepare_dirs()
@@ -493,7 +533,7 @@ def main(argv: list[str] | None = None) -> int:
         records = deduplicate(records)
         if source_name != "synthetic_demo":
             records = cap_per_source(records, MAX_PER_SOURCE_LABEL)
-        splits = split_records(records, cfg)
+        splits = split_records(records, cfg, mix_formal=args.mix_formal)
 
         for name, rows in splits.items():
             frame = pd.DataFrame(
@@ -503,6 +543,14 @@ def main(argv: list[str] | None = None) -> int:
             frame.to_parquet(PROCESSED_DIR / f"{name}.parquet", index=False)
         manifest = _manifest(splits, source_name or "unknown")
         manifest["run"] = cfg.label
+        manifest["mix_formal"] = args.mix_formal
+        # Without this, "OOD" is unverifiable after the fact: a reader cannot tell
+        # whether formal_academic was an unseen domain or a seen domain with unseen
+        # documents.
+        manifest["ood_domains"] = sorted(
+            {r.domain for r in splits["test_ood"]}
+        )
+        manifest["train_domains"] = sorted({r.domain for r in splits["train"]})
         manifest["generated_at"] = pd.Timestamp.now("UTC").isoformat()
         write_json(manifest_path, manifest)
         _distribution_plots(splits)

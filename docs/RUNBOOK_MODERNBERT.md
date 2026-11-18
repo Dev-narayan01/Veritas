@@ -97,6 +97,57 @@ python -c "import torch; print(torch.cuda.get_device_name(0))"
 
 You want `NVIDIA GeForce RTX 3050`.
 
+### Reading the first real result, and why it failed
+
+A full 2-epoch run on 21,574 HC3 rows produced:
+
+| split | balanced acc | ROC-AUC | human FPR |
+|---|---|---|---|
+| `val_in_domain` | **0.9885** | 0.9991 | 0.9% |
+| `test_ood` | **0.4415** | 0.3052 | **99.0%** |
+
+Both numbers are real and they disagree. `val_stack` is drawn from the same four HC3
+domains and the same generator as training, so 0.9885 measures memorisation of a
+format, not detection. On unseen text the model labels 99% of *human* writing as AI.
+
+Compare against the trivial baselines before claiming anything:
+
+```
+test_ood is 90.1% human
+always-human   accuracy 0.9011   balanced 0.5000   human FPR 0.000
+this model     accuracy ~0.203   balanced 0.4415   human FPR 0.990
+```
+
+Balanced accuracy below 0.5 is worse than a coin flip, and ROC-AUC below 0.5 means AI
+is ranked *below* human. The cause is distributional, not a threshold: every arXiv
+abstract and every wiki_csai row was held out, so formal academic prose appeared only
+in `test_ood` and none of it in training. The model learned "formal implies AI".
+
+Note the failure is flat across lengths (94.6%-99.5%), unlike the old system's length
+defect (2.4% at 60-100 words rising to 82.1% at 400+). This is a domain failure, not the
+length failure the long context window was meant to fix.
+
+### The fix: mix formal text into training
+
+`prepare_data.py` now takes `--mix-formal`, the share of arXiv rows kept out of domain:
+
+```bash
+python ml/prepare_data.py --force --mix-formal 0.5
+```
+
+* `0.0` (default) is the original behaviour: nothing formal in train. Kept as the
+  default so old numbers stay comparable.
+* `0.5` puts half the abstracts into train/val/test and holds back the other half.
+
+The two halves are disjoint by construction (each abstract carries its own group id,
+and the split is seeded), so no document is both trained on and tested on. This is
+pinned by `tests/test_prepare_data_formal_mix.py`.
+
+**`--mix-formal` changes what `test_ood` means.** At 0.0, `formal_academic` is an
+unseen *domain*. At 0.5 it is a seen domain with unseen *documents*. Any reported
+number has to say which it is, which is why the manifest now records `ood_domains`,
+`train_domains` and `mix_formal`.
+
 ### Two traps before the first run
 
 **`train 1 rows` in the banner.** `ml/prepare_data.py` falls back to a 60-row synthetic
