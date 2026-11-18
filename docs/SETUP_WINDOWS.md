@@ -108,9 +108,16 @@ Expect `1.26.4 2.2.3 1.5.2`.
 
 ## 6. GPU stack
 
-`pip install torch --index-url .../whl/cu121` failed with **"from versions: none"** because
-`download.pytorch.org` publishes per-CUDA wheels, and there is no cu121 build for Python
-3.15. With 3.12 it works — and you do not need cu121 specifically.
+`pip install torch --index-url .../whl/cu121` first failed with **"from versions: none"**
+because that venv was Python 3.15, and `download.pytorch.org` has no cp315 build. Under
+3.12 the same index resolves (`torch 2.14.1+cu126`) — and you do not need cu121
+specifically; match the tag to your driver.
+
+**But resolving is not the same as loading.** On a machine with Smart App Control
+enforced, the cu126 wheel downloads 2.6 GB and then `import torch` dies with
+`WinError 4551 ... Application Control policy has blocked this file`. That is section 6b,
+and it is the reason this whole page warns you to verify with `import torch` and not just
+with pip's success message.
 
 ### PyPI's Windows `torch` is CPU-only — this catches everyone
 
@@ -161,16 +168,59 @@ python -c "import torch; print('version:', torch.__version__); print('cuda build
 ```
 
 You need `cuda build: 12.x` (**not `None`**) and `available: True`.
-`cuda build: None` means the CPU wheel is still installed.
+`cuda build: None` means the CPU wheel is still installed. If `import torch` raises
+`WinError 4551` instead, stop — that is section 6b, and reinstalling will not help.
 
-Check the GPU is actually visible — this is the single most common silent failure:
+Then check the GPU is visible — but only *after* `import torch` is known to succeed, or you
+will read a code-integrity block as a missing GPU:
 
 ```powershell
-python -c "import torch; print(torch.__version__); print('cuda:', torch.cuda.is_available()); print(torch.cuda.get_device_name(0) if torch.cuda.is_available() else 'NO GPU')"
+python -c "import torch; print(torch.cuda.get_device_name(0) if torch.cuda.is_available() else 'NO GPU')"
 ```
 
-You need `cuda: True` and `NVIDIA GeForce RTX 3050`. If it says `False` you installed a
-CPU-only wheel — reinstall from the cu121 index above.
+You want `NVIDIA GeForce RTX 3050`.
+
+### 6b. If `import torch` fails with WinError 4551
+
+```
+OSError: [WinError 4551] An Application Control policy has blocked this file.
+Error loading "...\torch\lib\c10_cuda.dll" or one of its dependencies.
+```
+
+This is **Smart App Control** (policy `{0283AC0F-FFF1-49AE-ADA1-8A933130CAD6}`,
+CodeIntegrity event 3077). It requires DLLs to be signed or Microsoft-reputed, and
+PyTorch ships several unsigned DLLs in `torch/lib`. Upstream: `pytorch/pytorch#199711`.
+
+Reinstalling cannot fix it, and changing the CUDA tag will not either — the policy judges
+each file by hash. Which files pass is not predictable: on the machine this was measured
+on, the **PyPI CPU wheel imported fine** and the **cu126 wheel did not**.
+
+Confirm:
+
+```powershell
+Get-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Control\CI\Policy' | Select-Object VerifiedAndReputablePolicyState
+# 1 = enforcing, 0 = off, 2 = evaluation
+
+Get-WinEvent -FilterHashtable @{LogName='Microsoft-Windows-CodeIntegrity/Operational'; Id=3077} -MaxEvents 5 | Format-List TimeCreated, Message
+```
+
+`CiTool.exe --list-policies` returns access denied without elevation, so the registry
+value and the event log are the practical checks.
+
+Your options:
+
+| option | keeps SAC on? | cost |
+|---|---|---|
+| **WSL2** (recommended) | yes | clone into `~/Veritas`, not `/mnt/c/...` — cross-filesystem I/O is slow |
+| Turn SAC off | no, and **it cannot be turned back on without reinstalling Windows** | Windows Security ▸ App and browser control |
+| `--allow-cpu` | yes | hours instead of minutes; fine for a 200-row smoke test |
+
+Under WSL2 the Windows NVIDIA driver provides CUDA to Linux, so `nvidia-smi` works inside
+WSL and PyTorch's Linux wheel (which is the CUDA build on PyPI, signed-and-not-checked
+anyway) loads normally. This is the option that keeps the security feature.
+
+If the machine is managed by an employer or school, the policy is theirs; ask for an
+exclusion rather than working around it.
 
 Then confirm ModernBERT can load at all (this downloads ~600 MB once):
 

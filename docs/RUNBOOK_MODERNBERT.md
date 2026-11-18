@@ -62,24 +62,83 @@ pip install -r ml/requirements.txt
 ## Step 2 — GPU stack (exact versions that support ModernBERT)
 
 ```bash
-pip install torch --index-url https://download.pytorch.org/whl/cu121
+pip install -r ml/requirements.txt          # pulls torch from PyPI: the CPU wheel
 pip install "transformers==4.49.0" accelerate sentencepiece
+
+# then replace torch with a CUDA build; the tag comes from `nvidia-smi`
+pip uninstall -y torch
+pip install torch --index-url https://download.pytorch.org/whl/cu126
 ```
 
 `transformers < 4.48` **cannot** load ModernBERT — it will fail with an
 `AutoModelForSequenceClassification` error. 4.49.0 is the mature pin; 5.x changes APIs
 for no benefit here.
 
-Verify before going further:
+Torch is installed **last on purpose.** `ml/requirements.txt` pulls
+`sentence-transformers`, which depends on `torch`, so installing it first puts the CPU
+wheel in place; a later `pip install torch --upgrade` then reports "already satisfied"
+and changes nothing. On Windows the PyPI wheel is always CPU-only — only
+`download.pytorch.org` ships CUDA builds for Windows.
+
+Verify before going further. Check `torch.version.cuda` rather than calling
+`get_device_name()`, which raises before printing anything useful:
 
 ```bash
 python -c "import torch, transformers; \
-print('torch', torch.__version__, 'cuda', torch.cuda.is_available(), torch.cuda.get_device_name(0)); \
+print('torch', torch.__version__, 'cuda build', torch.version.cuda, 'available', torch.cuda.is_available()); \
 print('transformers', transformers.__version__)"
 ```
 
-You need `cuda True NVIDIA GeForce RTX 3050`. If `cuda` is `False` you installed a CPU
-wheel — reinstall from the `cu121` index above.
+You need `cuda build 12.x` and `available True`. Then, separately:
+
+```bash
+python -c "import torch; print(torch.cuda.get_device_name(0))"
+```
+
+You want `NVIDIA GeForce RTX 3050`.
+
+### If `import torch` itself fails on Windows
+
+Two different failures look alike. Separate them before doing anything:
+
+| symptom | `torch.version.cuda` | cause | fix |
+|---|---|---|---|
+| works, `available False` | `None` | CPU wheel from PyPI | reinstall from the cu126 index |
+| `OSError [WinError 4551] An Application Control policy has blocked this file` | n/a | **Smart App Control** refusing unsigned DLLs | see below |
+
+The second is not an install problem and reinstalling will not clear it. PyTorch ships
+unsigned DLLs in `torch/lib`; Smart App Control (policy
+`{0283AC0F-FFF1-49AE-ADA1-8A933130CAD6}`, event 3077) requires them signed or
+Microsoft-reputed. PyTorch tracks the signing gap as `pytorch/pytorch#199711`.
+
+Measured on an RTX 3050 machine: the **PyPI CPU wheel imported fine**, and the **cu126
+wheel died on `c10_cuda.dll`**. Reputation is per-file-hash, so which wheel survives is
+not predictable from the version.
+
+Confirm it is the policy, then pick an option:
+
+```powershell
+# is SAC enforcing? 1 = on, 0 = off, 2 = evaluation
+Get-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Control\CI\Policy' |
+    Select-Object VerifiedAndReputablePolicyState
+
+# what got blocked, and under which policy
+Get-WinEvent -FilterHashtable @{LogName='Microsoft-Windows-CodeIntegrity/Operational'; Id=3077} -MaxEvents 5 |
+    Format-List TimeCreated, Message
+```
+
+1. **WSL2** — no Smart App Control in Linux, and the Windows NVIDIA driver already
+   exposes CUDA to WSL. Keeps the security feature on. Files live under
+   `/mnt/c/...`, which is slow for I/O-heavy work, so clone into the Linux filesystem
+   (`~/Veritas`) and copy data in.
+2. **Turn Smart App Control off** — Windows Security ▸ App and browser control ▸
+   Smart App Control. **It cannot be turned back on without reinstalling Windows.**
+   A real trade-off, not a formality.
+3. **CPU with `--allow-cpu`** — `python ml/train_modernbert.py --allow-cpu --limit 200`.
+   Runs, and is a valid smoke test, but the real run is hours not minutes.
+
+On a machine you do not administer, the policy belongs to whoever does; ask them for an
+exclusion rather than fighting it.
 
 ## Step 3 — data
 

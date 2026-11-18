@@ -58,26 +58,70 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p.add_argument("--seed", type=int, default=42)
     p.add_argument("--fp16", action="store_true", default=True)
     p.add_argument("--no-fp16", dest="fp16", action="store_false")
+    p.add_argument("--allow-cpu", action="store_true",
+                   help="train on CPU instead of exiting; for smoke tests only")
     return p.parse_args(argv)
 
 
-def _require_gpu_stack() -> None:
-    """Fail loudly and early; a silent CPU fallback would take hours and teach nothing."""
+# Windows refuses to load an unsigned DLL when Smart App Control (or an MDM/WDAC
+# policy) is enforcing. PyTorch ships several unsigned DLLs in torch/lib, so the
+# failure looks like a broken install but is a security policy. Measured on a real
+# machine: the PyPI CPU wheel imported fine and the cu126 wheel died on
+# c10_cuda.dll with WinError 4551, so "reinstall" is the wrong advice twice over.
+_CODE_INTEGRITY_MARKERS = (
+    "Application Control policy has blocked",
+    "An Application Control policy has blocked",
+    "did not meet the Enterprise signing level",
+    "WinError 4551",
+    "0xc0e90002",
+)
+
+_CODE_INTEGRITY_HELP = """\
+Windows Code Integrity blocked a PyTorch DLL, so CUDA cannot start.
+
+This is Smart App Control (policy {{0283AC0F-FFF1-49AE-ADA1-8A933130CAD6}}) or a
+WDAC/MDM policy refusing to load unsigned binaries. torch/lib ships unsigned DLLs,
+so reinstalling, changing the CUDA tag, or upgrading torch will not clear it.
+PyTorch tracks the signing gap as pytorch/pytorch#199711.
+
+Your options, in the order worth trying:
+  1. WSL2 - Linux has no Smart App Control, and the Windows NVIDIA driver already
+     provides CUDA to WSL. Keeps the security feature on. See docs/SETUP_WINDOWS.md.
+  2. Turn Smart App Control off (Windows Security > App and browser control).
+     One way: it cannot be switched back on without reinstalling Windows.
+  3. Train on CPU with --allow-cpu. Hours instead of minutes, but it runs.
+
+To confirm the diagnosis: import torch after disabling SAC and check
+torch.cuda.is_available(). If that flips to True, the policy was the cause."""
+
+
+def _chain_has_code_integrity_block(exc: BaseException) -> bool:
+    """Walk __cause__/__context__: the block is often wrapped by an ImportError."""
+    seen: set[int] = set()
+    while exc is not None and id(exc) not in seen:
+        seen.add(id(exc))
+        if getattr(exc, "winerror", None) == 4551:
+            return True
+        text = str(exc)
+        if any(marker in text for marker in _CODE_INTEGRITY_MARKERS):
+            return True
+        exc = exc.__cause__ or exc.__context__  # type: ignore[assignment]
+    return False
+
+
+def _require_gpu_stack(allow_cpu: bool = False) -> str:
+    """Return the device to train on. Fail loudly rather than silently crawling."""
     try:
         import torch
         import transformers
     except Exception as exc:  # noqa: BLE001
+        if _chain_has_code_integrity_block(exc):
+            sys.exit(_CODE_INTEGRITY_HELP)
         sys.exit(
             "torch/transformers are missing.\n"
-            "  pip install torch --index-url https://download.pytorch.org/whl/cu121\n"
-            "  pip install 'transformers>=4.48' accelerate datasets sentencepiece\n"
+            "  pip install torch --index-url https://download.pytorch.org/whl/cu126\n"
+            "  pip install 'transformers==4.49.0' accelerate datasets sentencepiece\n"
             f"  (original error: {exc})"
-        )
-    if not torch.cuda.is_available():
-        sys.exit(
-            "CUDA is not available, so training would fall back to CPU and take many hours.\n"
-            "Check: python -c \"import torch; print(torch.cuda.is_available())\"\n"
-            "If that prints False you installed a CPU wheel; reinstall from the cu121 index."
         )
     from packaging.version import parse as vparse
 
@@ -86,11 +130,29 @@ def _require_gpu_stack() -> None:
             f"transformers {transformers.__version__} is too old for ModernBERT (needs >= 4.48).\n"
             "  pip install 'transformers==4.49.0'"
         )
+    if torch.cuda.is_available():
+        return "cuda"
+    if allow_cpu:
+        print("! CUDA unavailable, training on CPU because --allow-cpu was passed.")
+        print("! Expect hours, not minutes. This is a smoke test, not a real run.")
+        return "cpu"
+    sys.exit(
+        "CUDA is not available and --allow-cpu was not passed.\n"
+        "Check: python -c \"import torch; print(torch.version.cuda, torch.cuda.is_available())\"\n"
+        "  available True  -> pass --allow-cpu to train on CPU anyway\n"
+        "  cuda None       -> you have the PyPI CPU wheel; install from the cu126 index\n"
+        "  import error    -> likely a Windows code integrity block; see the message above\n"
+        "See docs/SETUP_WINDOWS.md."
+    )
 
 
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
-    _require_gpu_stack()
+    device = _require_gpu_stack(allow_cpu=args.allow_cpu)
+    if device == "cpu" and args.fp16:
+        # fp16 on CPU is far slower than fp32 and NumPy has no useful fp16 path here.
+        args.fp16 = False
+        print("! fp16 disabled: unsupported on CPU.")
 
     import numpy as np
     import pandas as pd
@@ -183,6 +245,7 @@ def main(argv: list[str] | None = None) -> int:
     # accuracy and the human false-positive rate next to it.
     report: dict[str, object] = {
         "model": args.model,
+        "device": device,
         "max_len": args.max_len,
         "epochs": args.epochs,
         "train_rows": len(train_frame),
