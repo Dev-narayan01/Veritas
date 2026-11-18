@@ -184,6 +184,28 @@ Short text is now handled well and long text still is not. That is the original 
 re-emerging rather than a new one, and it is the thing a long context window was meant
 to fix.
 
+### Both models on one fixed test set (8,272 rows, per domain)
+
+The aggregate comparison above was confounded. Scoring both saved models on the
+identical split separates a better model from an easier exam:
+
+| domain | n | mix 0.0 human FPR | mix 0.5 human FPR |
+|---|---|---|---|
+| `formal_academic` (human only) | 2,989 | **99.5%** | **3.3%** |
+| `wiki_csai` (held out in both) | 1,496 | 94.8% | **44.0%** |
+| `mage_heldout` (AI recall) | 797 | 75.5% | 79.2% |
+
+`wiki_csai` is the honest yardstick: it was trained on in *neither* run, so its
+improvement from 94.8% to 44.0% is generalisation, not recall of the domain just added.
+
+So the domain-mix fix is real, but insufficient. **44% of held-out human encyclopaedic
+text is still labelled AI.** That is not a shippable detector: on Wikipedia-style prose
+it flags almost half of genuine human writing.
+
+Reading the two rows together: `formal_academic` improved most because that is exactly
+what was added to training. `wiki_csai` improved less because it is a *related* domain,
+not the same one. The 41-point gap between them is the memorisation fraction.
+
 **`--mix-formal` changes what `test_ood` means.** At 0.0, `formal_academic` is an
 unseen *domain*. At 0.5 it is a seen domain with unseen *documents*. Any reported
 number has to say which it is, which is why the manifest now records `ood_domains`,
