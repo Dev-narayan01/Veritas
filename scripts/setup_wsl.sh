@@ -94,6 +94,25 @@ say "Resolving an interpreter the pins support (3.10-3.12, prefer 3.12)"
 
 venv_ver_of() { "$1" -c 'import sys; print("%d.%d" % sys.version_info[:2])' 2>/dev/null || echo none; }
 
+# uv's installer does not reliably write ~/.local/bin/env, so find the binary and
+# put its directory on PATH instead of sourcing a file that may not exist.
+UV_BIN=""
+find_uv() {
+  [ -n "$UV_BIN" ] && return 0
+  for c in uv "$HOME/.local/bin/uv" "$HOME/.cargo/bin/uv"; do
+    if command -v "$c" >/dev/null 2>&1; then UV_BIN="$(command -v "$c")"; return 0; fi
+    if [ -x "$c" ]; then UV_BIN="$c"; return 0; fi
+  done
+  command -v curl >/dev/null 2>&1 || return 1
+  echo "installing uv"
+  curl -LsSf https://astral.sh/uv/install.sh | sh >/dev/null
+  export PATH="$HOME/.local/bin:$PATH"
+  for c in "$HOME/.local/bin/uv" "$HOME/.cargo/bin/uv"; do
+    [ -x "$c" ] && { UV_BIN="$c"; return 0; }
+  done
+  return 1
+}
+
 PYTHON=""
 EXISTING_VENV=""
 if [ -x ".venv/bin/python" ]; then
@@ -123,26 +142,12 @@ if [ -z "$EXISTING_VENV" ] && [ -z "$PYTHON" ]; then
   have="$(python3 -c 'import sys; print("%d.%d" % sys.version_info[:2])' 2>/dev/null || echo none)"
   say "No usable system Python (found $have); using uv"
 
-  UV_BIN=""
-  for c in uv "$HOME/.local/bin/uv" "$HOME/.cargo/bin/uv"; do
-    if command -v "$c" >/dev/null 2>&1; then UV_BIN="$(command -v "$c")"; break; fi
-    if [ -x "$c" ]; then UV_BIN="$c"; break; fi
-  done
-
-  if [ -z "$UV_BIN" ]; then
-    echo "installing uv"
-    command -v curl >/dev/null 2>&1 || { warn "curl missing: sudo apt install -y curl"; exit 1; }
-    curl -LsSf https://astral.sh/uv/install.sh | sh
-    UV_BIN="$HOME/.local/bin/uv"
-  fi
-  [ -x "$UV_BIN" ] || { warn "uv installed but not found at $UV_BIN"; exit 1; }
-
-  # Note: uv's installer does not always write ~/.local/bin/env, so add the
-  # directory to PATH directly instead of sourcing a file that may not exist.
-  export PATH="$HOME/.local/bin:$PATH"
-  "$UV_BIN" venv --python 3.12 .venv
+  find_uv
+  # --seed puts pip into the venv. uv venvs have no pip by default, and the next
+  # few lines call 'python -m pip', which would die with "No module named pip".
+  "$UV_BIN" venv --seed --python 3.12 .venv
   EXISTING_VENV=".venv"
-  echo "created .venv with $("$UV_BIN" python find 3.12 2>/dev/null || echo CPython 3.12)"
+  echo "created .venv (seeded with pip)"
 fi
 
 if [ -n "$EXISTING_VENV" ]; then
@@ -160,7 +165,34 @@ fi
 # shellcheck disable=SC1091
 . .venv/bin/activate
 echo "python $(python --version 2>&1)"
-python -m pip install --quiet --upgrade pip
+
+# A venv can legitimately have no pip: uv builds them that way, and some distros
+# ship a python3-venv without ensurepip. Detect instead of assuming, because the
+# failure mode ("No module named pip") reads like a broken environment.
+PIP_MODE=""
+if python -m pip --version >/dev/null 2>&1; then
+  PIP_MODE="pip"
+elif python -m ensurepip --upgrade >/dev/null 2>&1 && python -m pip --version >/dev/null 2>&1; then
+  PIP_MODE="pip"
+  echo "pip was missing; installed it with ensurepip"
+elif find_uv; then
+  PIP_MODE="uv"
+  echo "pip is unavailable in this venv; installing with uv pip instead"
+else
+  warn "No pip in .venv and no uv to fall back on."
+  warn "Recreate it: uv venv --seed --python 3.12 .venv"
+  exit 1
+fi
+
+# Single entry point so the rest of the script does not care which one is in use.
+pip_install() {
+  case "$PIP_MODE" in
+    pip) python -m pip install --quiet "$@" ;;
+    uv)  "$UV_BIN" pip install --quiet --python "$PWD/.venv/bin/python" "$@" ;;
+  esac
+}
+
+[ "$PIP_MODE" = "pip" ] && python -m pip install --quiet --upgrade pip || true
 
 # --- 3. GPU before a 500 MB download ----------------------------------------
 # Discovering the driver is not passing the GPU through after installing torch is
@@ -175,21 +207,24 @@ fi
 
 # --- 4. dependencies --------------------------------------------------------
 say "Installing backend requirements"
-python -m pip install --quiet -r backend/requirements-dev.txt
+pip_install -r backend/requirements-dev.txt
 
 say "Installing ml requirements"
-python -m pip install --quiet -r ml/requirements.txt
+pip_install -r ml/requirements.txt
 
 say "Installing ModernBERT-capable transformers"
-python -m pip install --quiet "transformers==4.49.0" accelerate sentencepiece
+pip_install "transformers==4.49.0" accelerate sentencepiece
 
 # --- 5. verify torch --------------------------------------------------------
 say "Verifying torch"
 CUDA_OK="$(python -c 'import torch; print(int(torch.cuda.is_available()))' 2>/dev/null || echo import_failed)"
 if [ "$CUDA_OK" != "1" ]; then
   warn "CUDA not available (status: $CUDA_OK). Reinstalling torch from PyPI."
-  python -m pip uninstall -y --quiet torch || true
-  python -m pip install --quiet torch
+  case "$PIP_MODE" in
+    pip) python -m pip uninstall -y --quiet torch || true ;;
+    uv)  "$UV_BIN" pip uninstall --python "$PWD/.venv/bin/python" torch >/dev/null 2>&1 || true ;;
+  esac
+  pip_install torch
   CUDA_OK="$(python -c 'import torch; print(int(torch.cuda.is_available()))' 2>/dev/null || echo import_failed)"
 fi
 

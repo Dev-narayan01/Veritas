@@ -281,7 +281,19 @@ uv venv --python 3.12 .venv
 bash scripts/setup_wsl.sh --in-place
 ```
 
-**3. `data/processed/` is gitignored.** No clone contains it, so training fails with
+**3. `uv venv` creates a venv with no pip.** Every `python -m pip` then fails with
+`No module named pip`, which looks like a broken environment but is uv's default. Either
+seed it when creating, or repair an existing one:
+
+```bash
+uv venv --seed --python 3.12 .venv     # correct way
+python -m ensurepip --upgrade          # repair an existing pip-less venv
+```
+
+The script detects this and falls back through `pip` → `ensurepip` → `uv pip`, so it
+does not matter which route you took.
+
+**4. `data/processed/` is gitignored.** No clone contains it, so training fails with
 `FileNotFoundError` until `python ml/prepare_data.py` has run once.
 
 #### Keep the caches on Linux storage
