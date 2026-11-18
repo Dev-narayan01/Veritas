@@ -231,21 +231,38 @@ So on Linux a plain `python -m pip install torch` gives you the GPU build with n
 URL and no 2.6 GB download. WSL2 also gets CUDA from the Windows driver, so there is no
 driver to install inside Linux.
 
-Check WSL is present, then open it:
+**The whole setup is one command.** From PowerShell:
 
 ```powershell
-wsl --status
 wsl
 ```
 
-Inside Linux, **clone into the Linux filesystem, not `/mnt/c`**. `/mnt/c` works but goes
-through a translation layer that makes torch imports extremely slow and stalls
-dataloading. It is the single biggest performance mistake available here.
+then, inside Linux, from any directory:
 
-### The Python version is the next trap
+```bash
+curl -LsSf https://github.com/Dev-narayan01/Veritas/raw/arena/772d7f78-veritas/scripts/setup_wsl.sh -o /tmp/setup_wsl.sh
+sed -i 's/\r$//' /tmp/setup_wsl.sh      # in case it arrived with CRLF
+bash /tmp/setup_wsl.sh
+```
 
-WSL images now ship **Python 3.14** on recent Ubuntu, and the pins do not support it.
-Checked on PyPI, Linux x86_64 wheel tags:
+The script clones `~/Veritas` (on the Linux filesystem), picks a supported Python,
+installs everything, verifies CUDA and prints the smoke-test command. It is safe to
+re-run and takes `--dir`, `--in-place` and `--branch`.
+
+#### Three traps it handles, all of which have bitten this project
+
+**1. `main` is a placeholder.** It contains only `README.md`. A plain `git clone`
+checks out `main`, so you get a directory with one file and every script reports
+`No such file or directory`. Always clone the branch:
+
+```bash
+git clone --branch arena/772d7f78-veritas https://github.com/Dev-narayan01/Veritas.git
+```
+
+If you already cloned, `git switch arena/772d7f78-veritas` in the same directory is
+enough — that is what `~/Veritas` holding only `README.md` means.
+
+**2. WSL ships Python 3.14.** Checked on PyPI, Linux x86_64 wheel tags:
 
 | package | pinned | Linux wheels up to |
 |---|---|---|
@@ -254,67 +271,33 @@ Checked on PyPI, Linux x86_64 wheel tags:
 | `pandas` | 2.2.3 | cp313 |
 | `scikit-learn` | 1.5.2 | cp313 |
 
-So 3.13 has no `numpy` or `pyarrow` wheel and 3.14 has neither. pip then downloads
-source tarballs and fails with:
-
-```
-ERROR: Unknown compiler(s): [['cc'], ['gcc'], ['clang'], ...]
-```
-
-That is not a broken build; it is the wrong interpreter. **Valid range is 3.10–3.12;
-only 3.12 is tested.** Get 3.12 before doing anything else.
-
-`uv` is the reliable route because it downloads its own CPython and does not depend on
-what your distro happens to package:
+3.13 has no `numpy` or `pyarrow` wheel and 3.14 has neither, so pip compiles from source
+and fails with `ERROR: Unknown compiler(s)`. That is the wrong interpreter, not a broken
+build. `uv` solves it by downloading its own CPython; the script falls back to it
+automatically:
 
 ```bash
-curl -LsSf https://astral.sh/uv/install.sh | sh
-source "$HOME/.local/bin/env"
 uv venv --python 3.12 .venv
-bash scripts/setup_wsl.sh          # detects the 3.12 venv and reuses it
+bash scripts/setup_wsl.sh --in-place
 ```
 
-If your `apt` has 3.12 (`apt-cache policy python3.12`), the plain route also works:
+**3. `data/processed/` is gitignored.** No clone contains it, so training fails with
+`FileNotFoundError` until `python ml/prepare_data.py` has run once.
 
-```bash
-sudo apt update && sudo apt install -y python3.12 python3.12-venv git
-```
+#### Keep the caches on Linux storage
 
-Then:
-
-```bash
-git clone https://github.com/Dev-narayan01/Veritas.git ~/Veritas
-cd ~/Veritas
-bash scripts/setup_wsl.sh
-```
-
-`setup_wsl.sh` now **refuses** to continue on an unsupported interpreter instead of
-warning and failing 200 lines later, and it reuses an existing supported venv — which is
-what makes the `uv` route compose with it.
-
-`scripts/setup_wsl.sh` checks the GPU passthrough first (installing 539 MB of torch
-before discovering the driver is not passing the GPU through wastes the download),
-creates the venv, installs in the right order, and verifies CUDA at the end.
-
-Point the caches at Linux storage — `D:` is a Windows path and would be slow:
+`D:` is a Windows path that WSL sees as `/mnt/d`, which is slow and may not be mounted.
 
 ```bash
 export HF_HOME="$HOME/hf_cache"
 ```
 
-Add that to `~/.bashrc` if you want it to persist across shells.
+Add it to `~/.bashrc` to persist.
 
-**Files already built on Windows** (`data/processed/*.parquet`) are reachable at
-`/mnt/c/Users/DEV NARAYAN/Downloads/llm_final/Veritas/data/processed/` — copy them in
-rather than rebuilding the RAID download:
+#### Memory on an 8 GB machine
 
-```bash
-cp -r "/mnt/c/Users/DEV NARAYAN/Downloads/llm_final/Veritas/data/processed" ~/Veritas/data/
-```
-
-WSL2 has no systemd by default and its default memory cap is 50% of Windows RAM — on an
-8 GB machine that is 4 GB, which is workable for this model but tight. Cap it explicitly
-in `C:\Users\DEV NARAYAN\.wslconfig` if you see the kernel OOM-killer:
+WSL2 takes 50% of Windows RAM by default, so 4 GB here. Create
+`C:\Users\DEV NARAYAN\.wslconfig`:
 
 ```ini
 [wsl2]
@@ -322,24 +305,8 @@ memory=6GB
 swap=8GB
 ```
 
-Restart with `wsl --shutdown` after editing that file.
-
-Then confirm ModernBERT can load at all (~600 MB download, once). In WSL use the bash
-spelling of the same thing:
-
-```powershell
-python -c "
-import transformers, torch
-from transformers import AutoTokenizer, AutoModelForSequenceClassification
-print('transformers', transformers.__version__)
-tok = AutoTokenizer.from_pretrained('answerdotai/ModernBERT-base')
-m = AutoModelForSequenceClassification.from_pretrained('answerdotai/ModernBERT-base', num_labels=2)
-print('ModernBERT loaded, params:', sum(p.numel() for p in m.parameters()))
-"
-```
-
-If `transformers` is below 4.48 this raises an `AutoModelForSequenceClassification`
-error — ModernBERT support landed in 4.48, which is why the pin is 4.49.0.
+Then `wsl --shutdown` in PowerShell and reopen. Without `swap`, Windows terminates the
+process instead of paging.
 
 ## 7. Data and the fine-tune
 

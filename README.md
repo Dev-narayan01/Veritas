@@ -17,15 +17,35 @@ api/        Vercel Lite functions: pasted text, classical detector, stated limit
 docs/       REPORT · LITERATURE · EXPLAINED · QUICKSTART · DEPLOY · HUMAN_STEPS · KAGGLE
 ```
 
+## Read this first: `main` is a placeholder
+
+`main` contains only this README. The working code lives on
+**`arena/772d7f78-veritas`**, so a plain `git clone` gives you a directory with one file
+and every script below appears to be missing. Clone the branch:
+
+```bash
+git clone --branch arena/772d7f78-veritas https://github.com/Dev-narayan01/Veritas.git
+cd Veritas
+```
+
+If you already cloned, `git switch arena/772d7f78-veritas` in the same directory is enough.
+
 ## Quick start
 
 ```bash
-python3 -m venv .venv && .venv/bin/pip install -r backend/requirements-dev.txt
+python3 -m venv .venv
+.venv/bin/pip install -r backend/requirements-dev.txt
+.venv/bin/python ml/prepare_data.py              # writes data/processed/ (gitignored, so
+                                                 # a fresh clone never has it)
 .venv/bin/python scripts/make_bundled_corpus.py
-.venv/bin/python ml/run_all.py --smoke          # ~2 min on CPU, correctness only
+.venv/bin/python ml/run_all.py --smoke           # ~2 min on CPU, correctness only
 (cd backend && ../.venv/bin/uvicorn app.main:app --port 8000)
-(cd frontend && npm install && npm run dev)     # http://localhost:5173
+(cd frontend && npm install && npm run dev)      # http://localhost:5173
 ```
+
+`data/processed/` is gitignored, so it is built by `ml/prepare_data.py` rather than
+cloned. Anything that reads a parquet file fails with `FileNotFoundError` until that has
+run once.
 
 Full instructions: [`docs/QUICKSTART.md`](docs/QUICKSTART.md). Deployment:
 [`docs/DEPLOY.md`](docs/DEPLOY.md), with the owner-only steps in
