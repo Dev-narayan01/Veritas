@@ -118,7 +118,13 @@ class ArtifactRegistry:
         classical_path = directory / "classical.pkl"
         self._classical = ClassicalDetector(classical_path)
         self._ppl = PerplexityDetector(directory / "ppl_gpt2_model.pkl")
-        self._transformer = TransformerDetector(directory / "transformer")
+        # The window travels with the bundle: serving a checkpoint trained at 1024
+        # through a 256-token default would truncate exactly the long documents the
+        # model was trained to handle. Falls back to the env setting when absent.
+        served_max_len = self.manifest.get("transformer_max_len") or settings.transformer_max_len
+        self._transformer = TransformerDetector(
+            directory / "transformer", max_len=int(served_max_len)
+        )
 
         for mode in MODES:
             path = directory / f"stacker_{mode}.pkl"

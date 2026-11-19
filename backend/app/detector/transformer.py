@@ -41,8 +41,11 @@ class TransformerDetector:
 
     name = "transformer"
 
-    def __init__(self, model_dir: Path) -> None:
+    def __init__(self, model_dir: Path, max_len: int | None = None) -> None:
         self.model_dir = model_dir
+        # Per-instance so the offline scoring step can reproduce exactly this
+        # estimator at exactly this window without mutating global settings.
+        self._max_len = max_len
         self._state: TransformerModel | None = None
         self._error: str | None = None
         self._tried = False
@@ -56,6 +59,10 @@ class TransformerDetector:
     def reason(self) -> str | None:
         self._ensure()
         return self._error
+
+    @property
+    def max_len(self) -> int:
+        return int(self._max_len or settings.transformer_max_len)
 
     def _ensure(self) -> None:
         if self._tried:
@@ -94,7 +101,7 @@ class TransformerDetector:
         import torch
 
         state = self._state
-        max_len = settings.transformer_max_len
+        max_len = self.max_len
         enc = state.tokenizer(text, return_tensors="pt", truncation=False)
         ids = enc["input_ids"][0]
         if ids.numel() <= max_len:

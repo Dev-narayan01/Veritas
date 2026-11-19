@@ -71,7 +71,7 @@ def _step_done(module: str, marker: str, force: bool) -> bool:
     return path.exists()
 
 
-def _run_step(module: str, cfg: RunConfig, force: bool) -> int:
+def _run_step(module: str, cfg: RunConfig, force: bool, extra: list[str] | None = None) -> int:
     script = REPO_ROOT / "ml" / f"{module}.py"
     if not script.exists():
         log.warning("step %s has no script at %s; skipping", module, script)
@@ -83,6 +83,8 @@ def _run_step(module: str, cfg: RunConfig, force: bool) -> int:
         command.append("--full")
     if force:
         command.append("--force")
+    if extra:
+        command.extend(extra)
     log.info("running: %s", " ".join(command))
     completed = subprocess.run(command, cwd=REPO_ROOT / "ml", check=False)
     return completed.returncode
@@ -116,6 +118,7 @@ def write_manifest(cfg: RunConfig, steps: dict[str, dict]) -> dict:
         "source": "kaggle" if (cfg.full and not cfg.smoke) else "cpu",
         "smoke": cfg.smoke,
         "ppl_backend": ppl_meta.get("backend", "unknown"),
+        "transformer_max_len": transformer_meta.get("max_len"),
         "steps": steps,
         "notes": [],
     }
@@ -176,6 +179,15 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--force", action="store_true", help="redo completed steps")
     parser.add_argument("--steps", default="", help="comma-separated subset of step modules")
     parser.add_argument("--no-bundle", action="store_true")
+    parser.add_argument(
+        "--adopt-modernbert", type=Path, default=None, metavar="RUN_DIR",
+        help="score transformer features from an existing train_modernbert.py --out "
+             "directory instead of training roberta-base from the Hub",
+    )
+    parser.add_argument(
+        "--transformer-max-len", type=int, default=None,
+        help="scoring/serving window for --adopt-modernbert (default: the checkpoint's)",
+    )
     args = parser.parse_args(argv)
     cfg = RunConfig(smoke=args.smoke, full=args.full)
     selected = {s.strip() for s in args.steps.split(",") if s.strip()} or None
@@ -190,7 +202,15 @@ def main(argv: list[str] | None = None) -> int:
                 results[module] = {"label": label, "status": "skipped"}
                 continue
             log.info("step %-26s %s", module, label)
-            code = _run_step(module, cfg, args.force)
+            extra = None
+            if module == "train_transformer" and args.adopt_modernbert is not None:
+                # The site serves the ModernBERT checkpoint, not a fresh roberta-base.
+                # Feeding the stackers features from the roberta run would make every
+                # reported number describe a model that is not deployed.
+                extra = ["--adopt", str(args.adopt_modernbert)]
+                if args.transformer_max_len:
+                    extra += ["--max-len", str(args.transformer_max_len)]
+            code = _run_step(module, cfg, args.force, extra)
             results[module] = {"label": label, "status": "ok" if code == 0 else f"exit {code}"}
             if code != 0:
                 if module in SOFT_STEPS:

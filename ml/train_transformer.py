@@ -14,9 +14,18 @@ runtime verifies it before scoring anything.
 from __future__ import annotations
 
 import argparse
+import sys
+from pathlib import Path
 
-from common import ARTIFACT_DIR, RunConfig, log, prepare_dirs, seed_everything, timer, write_json
+from common import ARTIFACT_DIR, REPO_ROOT, RunConfig, log, prepare_dirs, seed_everything, timer, write_json
 from featurestore import SPLITS, cap_rows, load_split, reset, write_rows
+
+# The splits the rest of the pipeline actually consumes when scoring an adopted
+# checkpoint. ``train`` is deliberately absent: stackers are fitted on ``val_stack`` and
+# thresholds on ``val_cal``, and nothing downstream reads a transformer feature for the
+# training split. Scoring 13,777 extra documents to produce a column nobody opens is
+# most of the runtime of that step.
+SCORED_SPLITS = ("val_stack", "val_cal", "test", "test_ood")
 
 TARGET_DIR = ARTIFACT_DIR / "transformer"
 
@@ -49,6 +58,19 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--smoke", action="store_true")
     parser.add_argument("--full", action="store_true")
     parser.add_argument("--force", action="store_true")
+    parser.add_argument(
+        "--adopt", type=Path, default=None,
+        help="score every split with an already-trained checkpoint (a train_modernbert.py "
+             "--out directory) instead of training roberta-base here",
+    )
+    parser.add_argument(
+        "--max-len", type=int, default=None,
+        help="scoring window for --adopt; defaults to the checkpoint's training max_len",
+    )
+    parser.add_argument(
+        "--all-splits", action="store_true",
+        help="also score the train split (not read by any downstream step)",
+    )
     args = parser.parse_args(argv)
     cfg = RunConfig(smoke=args.smoke, full=args.full)
     prepare_dirs()
@@ -57,6 +79,9 @@ def main(argv: list[str] | None = None) -> int:
     if (TARGET_DIR / "config.json").exists() and not args.force:
         log.info("transformer weights already present; use --force to retrain")
         return 0
+
+    if args.adopt is not None:
+        return _adopt(args, cfg)
 
     ok, reason = trainer_available()
     if not ok:
@@ -157,6 +182,85 @@ def main(argv: list[str] | None = None) -> int:
             log.info("transformer scored %s rows for %s", len(rows), split)
     return 0
 
+
+# __main__ guard moved to the end of the file so helpers defined below main() are bound.
+
+
+def _adopt(args, cfg: RunConfig) -> int:
+    """Score every split with an existing checkpoint, using the *serving* estimator.
+
+    ``run_all.py`` wants transformer features in the feature store before it can fit
+    ``standard``. The default path trains ``roberta-base`` from the Hub, which is not
+    the checkpoint this project actually spent GPU hours on. This path scores the
+    splits with ``TransformerDetector`` -- the same class, window and averaging rule the
+    API uses -- so the stacker is fitted on the numbers the site will produce.
+
+    One estimator difference is unavoidable and is recorded rather than smoothed over:
+    ``train_modernbert.py`` reports a single forward pass truncated at ``max_len``,
+    while serving slides a window with stride 128 and averages. Above the window size
+    the two are not the same number.
+    """
+    from adopt_modernbert import install, verify
+
+    ok, reason = trainer_available()
+    if not ok:
+        log.warning("cannot score with the checkpoint: %s", reason)
+        write_json(ARTIFACT_DIR / "transformer_meta.json",
+                   {"trained": False, "reason": reason, "run": cfg.label})
+        return 0
+
+    run = args.adopt if args.adopt.is_absolute() else (Path.cwd() / args.adopt)
+    verified = verify(run)
+    report = verified["report"]
+    max_len = args.max_len or report.get("max_len") or 1024
+
+    sys.path.insert(0, str(REPO_ROOT / "backend"))
+    from app.detector.transformer import TransformerDetector
+
+    with timer("score_transformer"):
+        # Load from the source run before touching the bundle: a checkpoint that cannot
+        # be loaded must not displace the weights that are currently serving.
+        probe = TransformerDetector(run, max_len=max_len)
+        if not probe.available:
+            raise RuntimeError(f"cannot load {run}: {probe.reason}")
+        install(run, TARGET_DIR, max_len, dry_run=False)
+        detector = TransformerDetector(TARGET_DIR, max_len=max_len)
+        if not detector.available:
+            # Refuse rather than write 0.5 for every row: a constant column would let a
+            # stacker "fit" and report a mode that has not actually run.
+            raise RuntimeError(f"adopted checkpoint did not load from {TARGET_DIR}: {detector.reason}")
+        splits = list(SCORED_SPLITS) + (["train"] if args.all_splits else [])
+        for split in splits:
+            frame = load_split(split)
+            if frame.empty:
+                continue
+            reset(split, "transformer")
+            rows = []
+            for text, row_id in zip(frame["text"].tolist(), frame["id"].tolist()):
+                score = detector.score(str(text))
+                rows.append({"id": row_id, "p_transformer": float(score["probability"])})
+            write_rows(split, "transformer", rows)
+            log.info("transformer scored %s rows for %s (max_len=%s)", len(rows), split, max_len)
+        write_json(
+            ARTIFACT_DIR / "transformer_meta.json",
+            {
+                "trained": True,
+                "adopted": True,
+                "base": report.get("model"),
+                "rows": report.get("train_rows"),
+                "epochs": report.get("epochs"),
+                "max_len": max_len,
+                "run": cfg.label,
+                "source_run": str(args.adopt),
+                "scored_splits": splits,
+                "estimator": (
+                    "sliding window stride 128, mean of per-window probabilities "
+                    "(the serving estimator); train_modernbert.py reports a single "
+                    "truncated forward pass instead, so numbers above max_len differ"
+                ),
+            },
+        )
+    return 0
 
 if __name__ == "__main__":
     raise SystemExit(main())
