@@ -474,6 +474,29 @@ reachable, and it currently sends every row to `test_ood` rather than training. 
 future run aimed at the 44% number needs those rows mixed in, held out by article, with
 `wiki_csai` kept as the untouched evaluation domain.
 
+### CORRECTION: the corpus that ships already trains on Wikipedia
+
+The section above was measured with a hand-built control that only replayed the arXiv
+step. A full rebuild on the real machine produces a richer corpus than that control,
+and the probe run showed what was actually in `train`:
+
+```
+val_in_domain by_domain:
+  encyclopedia       n=794  positive_rate=0.000  human_fp_rate=26.7%
+  formal_academic    n=274  positive_rate=0.000  human_fp_rate=14.6%
+  mage_mixed         n=720  ...
+```
+
+`encyclopedia` in `val_in_domain` means Wikipedia human rows are already reaching the
+in-domain splits, so the "add Wikipedia to training" lever described just above is
+**already pulled** whenever the Hub is reachable. What is left is not a missing-data
+problem but a weighting problem: Wikipedia human prose is a small slice next to ~12,000
+HC3 rows, and it still lands at 26.7% human FPR.
+
+This is the third time a sandbox measurement has not transferred to the real machine.
+The proxy is useful for "is this worth two hours", but it must be checked against one
+real `--limit` run before it is written down as a conclusion.
+
 ### `by_domain` was dead code in every report until this fix
 
 `train_modernbert.py` read splits with `pd.read_parquet(path)[["text", "label"]]`, then
