@@ -147,3 +147,25 @@ def test_mixed_in_topics_still_contribute_to_training() -> None:
     splits = split_records(corpus, RunConfig(smoke=False), mix_formal=0.5)
     train_topics = {r.source for r in splits["train"] if r.source != "hc3"}
     assert train_topics, "no formal topic reached training at all"
+
+
+def test_legacy_formal_source_is_still_recognised_as_formal() -> None:
+    """Rows tagged with the old single-source name must not leak into training.
+
+    ``load_arxiv`` used to tag every abstract ``arxiv_abstract``. When ``split_records``
+    started matching only the new per-field tags, those rows stopped being seen as
+    formal and fell through into the in-domain splits, so formal human prose was
+    trained on while ``test_ood`` was reported as unseen.
+    """
+    from prepare_data import OOD_FORMAL_SOURCE
+
+    corpus = _corpus()
+    for r in corpus:
+        if r.source in ARXIV_TOPICS.values():
+            r.source = OOD_FORMAL_SOURCE
+            r.domain = "formal_academic"
+
+    splits = split_records(corpus, RunConfig(smoke=False), mix_formal=0.0)
+    leaked = [r for r in splits["train"] if r.source == OOD_FORMAL_SOURCE]
+    assert leaked == [], f"{len(leaked)} legacy formal rows reached training"
+    assert [r for r in splits["test_ood"] if r.source == OOD_FORMAL_SOURCE]

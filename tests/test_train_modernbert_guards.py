@@ -110,7 +110,7 @@ def test_no_instruction_points_at_a_missing_script() -> None:
     assert not (repo / "ml" / "evaluate_modernbert.py").exists()
 
 
-def test_by_length_uses_positional_masks() -> None:
+def test_report_has_no_get_indexer_anywhere() -> None:
     """get_indexer on a non-unique index can return -1; positional masks cannot.
 
     Checked on executable lines only: the explanation of the old bug mentions
@@ -120,27 +120,84 @@ def test_by_length_uses_positional_masks() -> None:
         Path(__file__).resolve().parent.parent / "ml" / "train_modernbert.py"
     ).read_text().splitlines()
     code = [ln for ln in lines if not ln.lstrip().startswith("#")]
-    assert any("np.flatnonzero(bucket_values == label_value)" in ln for ln in code)
     assert not any("get_indexer" in ln for ln in code)
 
 
-def test_by_domain_uses_positional_masks() -> None:
-    """The domain breakdown must not use get_indexer (returns -1 on non-unique index)."""
-    lines = (
-        Path(__file__).resolve().parent.parent / "ml" / "train_modernbert.py"
-    ).read_text().splitlines()
-    code = [ln for ln in lines if not ln.lstrip().startswith("#")]
-    assert any("np.flatnonzero(domain_values == domain_name)" in ln for ln in code)
-    assert not any("get_indexer" in ln for ln in code)
+def test_by_domain_is_actually_emitted_for_real_arrays() -> None:
+    """The bug this replaces: by_domain was guarded on a column the loader dropped.
+
+    The old test grepped the source for ``entry["by_domain"] = {}`` and passed while
+    the branch was unreachable, so every report shipped with no per-domain section.
+    This one runs the function.
+    """
+    from ml.train_modernbert import build_split_report
+
+    # 40 rows over two domains, mixed labels, one domain perfectly separable.
+    labels, probs, domains = [], [], []
+    for i in range(40):
+        domain = "arxiv_ai" if i % 2 else "wiki_csai"
+        label = i % 2
+        labels.append(label)
+        probs.append(0.95 if label else 0.05)
+        domains.append(domain)
+    entry = build_split_report(labels, probs, domains=domains)
+    assert "by_domain" in entry
+    assert set(entry["by_domain"]) == {"arxiv_ai", "wiki_csai"}
+    assert entry["by_domain"]["wiki_csai"]["human_false_positive_rate"] == 0.0
 
 
-def test_report_contains_a_per_domain_breakdown() -> None:
-    """Aggregate OOD numbers are not comparable across --mix-formal values."""
-    source = (
-        Path(__file__).resolve().parent.parent / "ml" / "train_modernbert.py"
-    ).read_text()
-    assert 'entry["by_domain"] = {}' in source
-    assert '"human_false_positive_rate"' in source
+def test_one_class_domain_still_reports_a_false_positive_rate() -> None:
+    """arxiv_ai in test_ood has zero AI rows; its FPR is still the number that matters.
+
+    Reporting nothing here is how a 99% FPR on formal prose stayed invisible: the old
+    code computed human FPR only inside ``if len(set(y)) > 1``.
+    """
+    from ml.train_modernbert import build_split_report
+
+    labels = [0] * 20 + [0, 1] * 20
+    probs = [0.9] * 20 + [0.05, 0.95] * 20
+    domains = ["arxiv_ai"] * 20 + ["wiki_csai"] * 40
+    entry = build_split_report(labels, probs, domains=domains)
+    ai_domain = entry["by_domain"]["arxiv_ai"]
+    assert ai_domain["positive_rate"] == 0.0
+    assert ai_domain["human_false_positive_rate"] == 1.0
+    assert "roc_auc" not in ai_domain  # undefined for a single class
+
+
+def test_by_length_is_emitted_and_uses_positional_masks() -> None:
+    from ml.train_modernbert import build_split_report
+
+    labels, probs, words = [], [], []
+    for i in range(80):
+        label = i % 2
+        labels.append(label)
+        probs.append(0.9 if label else 0.1)
+        words.append(40 + (i // 2) * 12)  # spans every bucket
+    entry = build_split_report(labels, probs, word_counts=words)
+    assert set(entry["by_length"]) == {"<100", "100-200", "200-400", "400+"}
+    for bucket in entry["by_length"].values():
+        assert bucket["human_fp_rate"] == 0.0
+
+
+def test_report_rejects_misaligned_arrays() -> None:
+    """Silently zipping mismatched arrays is how a wrong number gets published."""
+    import pytest
+
+    from ml.train_modernbert import build_split_report
+
+    with pytest.raises(ValueError, match="not aligned"):
+        build_split_report([0, 1, 0], [0.1, 0.9])
+
+
+def test_loader_keeps_the_domain_column() -> None:
+    """The root cause: read() selected only text/label, so by_domain never ran."""
+    from ml.train_modernbert import columns_for_report
+
+    assert columns_for_report(["id", "text", "label", "domain", "words"]) == [
+        "text", "label", "domain",
+    ]
+    # A split without domain must still load.
+    assert columns_for_report(["text", "label"]) == ["text", "label"]
 
 
 def test_banner_does_not_mislabel_a_full_run_as_a_subset() -> None:

@@ -151,6 +151,123 @@ def _require_gpu_stack(allow_cpu: bool = False) -> str:
     )
 
 
+def columns_for_report(available) -> list[str]:
+    """Columns to keep when loading a split: always text/label, plus domain if present.
+
+    Module-level so a test can prove the loader keeps ``domain``. When this returned
+    only ``["text", "label"]``, ``build_split_report``'s ``domains=None`` path was the
+    only one ever taken and no report contained a per-domain breakdown.
+    """
+    cols = ["text", "label"]
+    if "domain" in available:
+        cols.append("domain")
+    return cols
+
+
+def _rate(pred, mask) -> float:
+    """Fraction of ``pred`` that is 1 inside ``mask``; raises on an empty mask."""
+    return float(pred[mask].mean())
+
+
+def build_split_report(
+    labels,
+    probs,
+    domains=None,
+    word_counts=None,
+) -> dict[str, object]:
+    """Per-split metrics for one evaluated split.
+
+    Pure function took this out of the training script so the reporting rules can be
+    tested without a GPU. The previous version lived inline behind
+    ``if "domain" in frame.columns`` and the loader never kept that column, so
+    ``by_domain`` was dead code in every report the project ever produced while the
+    tests (which grepped the source) passed.
+
+    ``labels``/``probs`` are aligned positional arrays. ``domains`` and
+    ``word_counts`` are optional; each enables its own breakdown.
+    """
+    import numpy as np
+    import pandas as pd
+    from sklearn.metrics import balanced_accuracy_score, roc_auc_score
+
+    y = np.asarray(labels)
+    p = np.asarray(probs, dtype=float)
+    if y.shape != p.shape:
+        raise ValueError(f"labels {y.shape} and probs {p.shape} are not aligned")
+
+    entry: dict[str, object] = {
+        "n": int(len(y)),
+        "positive_rate": float(y.mean()) if len(y) else 0.0,
+    }
+    pred = (p >= 0.5).astype(int)
+    if len(set(y.tolist())) > 1:
+        entry["roc_auc"] = float(roc_auc_score(y, p))
+        entry["balanced_accuracy"] = float(balanced_accuracy_score(y, pred))
+    # Reported for one-class splits too: a split of human text with no AI rows has no
+    # AUC but its false-positive rate is exactly the number that matters.
+    human = y == 0
+    if human.any():
+        entry["human_false_positive_rate"] = _rate(pred, human)
+    ai = y == 1
+    if ai.any():
+        entry["ai_recall"] = _rate(pred, ai)
+
+    # Per-domain breakdown. Aggregates across a mixed test set are not comparable
+    # between runs: --mix-formal changes how many arXiv rows the held-out split
+    # contains, so the same model can look better on a smaller, easier set.
+    if domains is not None:
+        domain_values = np.asarray(domains)
+        if domain_values.shape != y.shape:
+            raise ValueError("domains and labels are not aligned")
+        by_domain: dict[str, dict[str, object]] = {}
+        # Positional masks, not get_indexer: the latter returns -1 for misses on a
+        # non-unique index and would silently index from the end of `probs`.
+        for domain_name in pd.unique(domain_values):
+            idx = np.flatnonzero(domain_values == domain_name)
+            if len(idx) < 10:
+                continue
+            dom_y, dom_pred = y[idx], pred[idx]
+            dom_entry: dict[str, object] = {
+                "n": int(len(idx)),
+                "positive_rate": float(dom_y.mean()),
+            }
+            if len(set(dom_y.tolist())) > 1:
+                dom_entry["roc_auc"] = float(roc_auc_score(dom_y, p[idx]))
+                dom_entry["balanced_accuracy"] = float(
+                    balanced_accuracy_score(dom_y, dom_pred)
+                )
+            if (dom_y == 0).any():
+                # This is the collision that made the last two runs unreadable:
+                # arxiv_cv/arxiv_lg are *seen* domains, arxiv_ai and wiki_csai are
+                # unseen, and averaging them together hides both facts.
+                dom_entry["human_false_positive_rate"] = _rate(dom_pred, dom_y == 0)
+            if (dom_y == 1).any():
+                dom_entry["ai_recall"] = _rate(dom_pred, dom_y == 1)
+            by_domain[str(domain_name)] = dom_entry
+        entry["by_domain"] = by_domain
+
+    if word_counts is not None:
+        counts = np.asarray(word_counts)
+        if counts.shape != y.shape:
+            raise ValueError("word_counts and labels are not aligned")
+        by_len: dict[str, dict[str, object]] = {}
+        for bucket, lo, hi in (
+            ("<100", 0, 100), ("100-200", 100, 200),
+            ("200-400", 200, 400), ("400+", 400, np.inf),
+        ):
+            idx = np.flatnonzero((counts > lo) & (counts <= hi))
+            if len(idx) < 10:
+                continue
+            sub_y, sub_pred = y[idx], pred[idx]
+            bucket_entry: dict[str, object] = {"n": int(len(idx))}
+            if (sub_y == 0).any():
+                bucket_entry["human_fp_rate"] = _rate(sub_pred, sub_y == 0)
+            by_len[bucket] = bucket_entry
+        entry["by_length"] = by_len
+
+    return entry
+
+
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
     device = _require_gpu_stack(allow_cpu=args.allow_cpu)
@@ -179,7 +296,14 @@ def main(argv: list[str] | None = None) -> int:
     def read(path: Path, limit: int = 0) -> pd.DataFrame:
         if not path.exists():
             sys.exit(f"missing {path} - run `python ml/prepare_data.py` first")
-        frame = pd.read_parquet(path)[["text", "label"]].dropna()
+        available = pd.read_parquet(path)
+        # Keep `domain` when the split has it. Selecting only text/label here silently
+        # starved the per-domain report: `by_domain` guards on
+        # `if "domain" in frame.columns`, so the branch was dead and every report
+        # carried no per-domain numbers at all. The guard could never fire, and the
+        # tests only asserted the branch existed, not that it ran.
+        wanted = columns_for_report(available.columns)
+        frame = available[wanted].dropna(subset=["text", "label"])
         frame["label"] = frame["label"].astype(int)
         if limit:
             frame = frame.sample(n=min(limit, len(frame)), random_state=args.seed)
@@ -316,66 +440,12 @@ def main(argv: list[str] | None = None) -> int:
         )
         logits = trainer.predict(ds).predictions
         probs = 1 / (1 + np.exp(-(logits[:, 1] - logits[:, 0])))
-        y = frame["label"].to_numpy()
-        entry: dict[str, object] = {
-            "n": int(len(y)),
-            "positive_rate": float(y.mean()),
-        }
-        if len(set(y.tolist())) > 1:
-            entry["roc_auc"] = float(roc_auc_score(y, probs))
-            pred = (probs >= 0.5).astype(int)
-            entry["balanced_accuracy"] = float(balanced_accuracy_score(y, pred))
-            # the number that was hiding in the old report
-            human = y == 0
-            if human.any():
-                entry["human_false_positive_rate"] = float(pred[human].mean())
-        # Per-domain breakdown. Aggregates across a mixed test set are not comparable
-        # between runs: --mix-formal changes how many arXiv rows the held-out split
-        # contains, so the same model can look better on a smaller, easier set. Every
-        # domain gets its own numbers so a reader can compare like with like.
-        if "domain" in frame.columns:
-            entry["by_domain"] = {}
-            domain_values = frame["domain"].to_numpy()
-            # Positional masks, not get_indexer: the latter returns -1 for misses on a
-            # non-unique index and would silently index from the end of `probs`.
-            for domain_name in pd.unique(domain_values):
-                idx = np.flatnonzero(domain_values == domain_name)
-                dom_y, dom_probs = y[idx], probs[idx]
-                if len(dom_y) < 10:
-                    continue
-                dom_pred = (dom_probs >= 0.5).astype(int)
-                dom_entry: dict[str, object] = {
-                    "n": int(len(dom_y)),
-                    "positive_rate": float(dom_y.mean()),
-                }
-                if len(set(dom_y.tolist())) > 1:
-                    dom_entry["roc_auc"] = float(roc_auc_score(dom_y, dom_probs))
-                    dom_entry["balanced_accuracy"] = float(
-                        balanced_accuracy_score(dom_y, dom_pred)
-                    )
-                if (dom_y == 0).any():
-                    dom_entry["human_false_positive_rate"] = float(dom_pred[dom_y == 0].mean())
-                entry["by_domain"][str(domain_name)] = dom_entry  # type: ignore[index]
-
-        # length breakdown: this is the defect we are trying to fix
-        buckets = pd.cut(frame["text"].str.split().str.len(), [0, 100, 200, 400, 100_000],
-                         labels=["<100", "100-200", "200-400", "400+"])
-        by_len = {}
-        # Positional boolean mask: frame.groupby gives labels, not positions, and
-        # get_indexer on a non-unique index returns -1 for misses, which would
-        # silently index from the end of the array.
-        bucket_values = buckets.to_numpy()
-        for label_value in pd.unique(bucket_values[pd.notna(bucket_values)]):
-            idx = np.flatnonzero(bucket_values == label_value)
-            sub_probs, sub_y = probs[idx], y[idx]
-            if len(sub_y) < 10:
-                continue
-            entry_bucket = {"n": int(len(sub_y))}
-            pred_sub = (sub_probs >= 0.5).astype(int)
-            if (sub_y == 0).any():
-                entry_bucket["human_fp_rate"] = float(pred_sub[sub_y == 0].mean())
-            by_len[str(label_value)] = entry_bucket
-        entry["by_length"] = by_len
+        entry = build_split_report(
+            labels=frame["label"].to_numpy(),
+            probs=probs,
+            domains=frame["domain"].to_numpy() if "domain" in frame.columns else None,
+            word_counts=frame["text"].str.split().str.len().to_numpy(),
+        )
         report["splits"][name] = entry  # type: ignore[index]
 
     evaluate(val_frame, "val_in_domain")

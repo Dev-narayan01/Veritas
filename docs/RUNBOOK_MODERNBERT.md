@@ -425,3 +425,66 @@ numbers are in front of us. A bigger model on more data is a strong prior, not a
 
 Push your branch and tell me the name. I can run the evaluation against `test_ood` here —
 no deploy, just numbers — and tell you whether it actually beat 0.896.
+
+### Measured on the real corpus: the field holdout does not fix Wikipedia
+
+Run before the next fine-tune, with a TF-IDF + logistic-regression proxy on the same
+groups and the same `test_ood` rows. The proxy is not a substitute for the
+fine-tune, but it is fast enough to answer "is this rebuild worth two hours", and it
+disagrees with the plan, so it is recorded here rather than discovered again later.
+
+Control: one arXiv field (`ai`), random document holdout, 50% mixed in — i.e. exactly
+what the shipped `modernbert_mixed` checkpoint was trained on.
+
+| train set | held-out arXiv field FPR | `wiki_csai` human FPR | wiki recall |
+|---|---|---|---|
+| one field (`ai`), docs held out | 0.0% (same field) | **30.4%** | 0.83 |
+| three fields, `ai` held out whole | **1.0%** | **35.7%** | 0.91 |
+
+Two conclusions, both of which contradict the earlier expectation:
+
+1. **Holding out a whole field does not generalise better than holding out documents.**
+   The unseen `ai` field lands at 1.0% FPR, i.e. essentially the same as a seen field.
+   Formal-register recognition transfers across arXiv fields; the field holdout does
+   not make `test_ood` harder in the way that was assumed.
+2. **More arXiv fields makes `wiki_csai` slightly worse, not better** (30.4% → 35.7%),
+   while recall on wiki rises. Encyclopaedic Wikipedia prose is not made easier by
+   adding more arXiv prose: both are formal, and the model still reads formal human
+   writing as machine writing.
+
+The memorisation explanation from the previous section is therefore incomplete. It is
+not that the model memorised `ai` abstracts; it is that *`wiki_csai` is a different
+domain from every arXiv field* and none of the arXiv mixing addresses it.
+
+### What does move Wikipedia
+
+Same proxy, Wikipedia only, split by content hash into a fit half and an untouched
+evaluation half (`n=759`, 371 human / 388 AI):
+
+| train set | wiki human FPR | wiki recall | wiki AUC |
+|---|---|---|---|
+| current recipe (no Wikipedia) | 35.9% | 0.91 | 0.876 |
+| + 737 Wikipedia human rows in training | **20.0%** | 0.94 | 0.953 |
+
+And it costs nothing on the arXiv holdout: `arxiv_ai` human FPR 1.03% → 0.97%.
+
+So the binding constraint is Wikipedia human prose in the training set. `load_wiki_formal()`
+already exists and tags rows `domain="encyclopedia"`, but it only runs where the Hub is
+reachable, and it currently sends every row to `test_ood` rather than training. Any
+future run aimed at the 44% number needs those rows mixed in, held out by article, with
+`wiki_csai` kept as the untouched evaluation domain.
+
+### `by_domain` was dead code in every report until this fix
+
+`train_modernbert.py` read splits with `pd.read_parquet(path)[["text", "label"]]`, then
+guarded the per-domain section with `if "domain" in frame.columns`. The guard was always
+false, so no `eval_report.json` the project ever wrote contained a `by_domain` section —
+which is why the two checkpoints had to be compared with an out-of-band script.
+
+The tests did not catch it because they asserted the branch *existed* (a substring check
+on the source) rather than that it *ran*. The reporting logic now lives in
+`build_split_report(labels, probs, domains=..., word_counts=...)`, a pure function, and
+the tests call it with real arrays. `by_domain` and `by_length` also report a split's
+`human_false_positive_rate` even when it holds only human rows (the `arxiv_ai` domain has
+no AI rows at all), which previously produced no FPR for exactly the split that was
+failing.

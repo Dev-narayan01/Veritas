@@ -408,7 +408,12 @@ def split_records(
     The cost is a changed meaning for ``test_ood``: ``formal_academic`` becomes a
     *seen* domain with *unseen* documents. Reported numbers must say so.
     """
-    formal_sources = set(ARXIV_TOPICS.values())
+    # The legacy single-source name is included deliberately. Rows carrying it exist in
+    # older caches and in callers that still pass the old tag; when it was omitted they
+    # were not recognised as formal at all, so they were routed into train/val/test
+    # instead of the holdout. Formal prose leaking into training silently invalidates
+    # both the in-domain numbers and the claim that test_ood is unseen.
+    formal_sources = set(ARXIV_TOPICS.values()) | {OOD_FORMAL_SOURCE}
     formal = [r for r in records if r.source in formal_sources]
     other_ood = [
         r for r in records
