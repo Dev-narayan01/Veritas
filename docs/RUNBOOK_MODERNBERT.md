@@ -468,11 +468,12 @@ evaluation half (`n=759`, 371 human / 388 AI):
 
 And it costs nothing on the arXiv holdout: `arxiv_ai` human FPR 1.03% → 0.97%.
 
-So the binding constraint is Wikipedia human prose in the training set. `load_wiki_formal()`
-already exists and tags rows `domain="encyclopedia"`, but it only runs where the Hub is
-reachable, and it currently sends every row to `test_ood` rather than training. Any
-future run aimed at the 44% number needs those rows mixed in, held out by article, with
-`wiki_csai` kept as the untouched evaluation domain.
+~~So the binding constraint is Wikipedia human prose in the training set.~~
+**Wrong, and superseded twice over.** `load_wiki_formal()` does reach the Hub on a
+normal machine and its `encyclopedia` rows do land in the in-domain splits, so the data
+was never missing; and when the rows *were* added the number got worse, not better. See
+the two corrections below and "Measured: training budget is not the wiki problem"
+further down. Kept here so the paragraph cannot be re-read as current.
 
 ### CORRECTION: the corpus that ships already trains on Wikipedia
 
@@ -491,7 +492,9 @@ val_in_domain by_domain:
 in-domain splits, so the "add Wikipedia to training" lever described just above is
 **already pulled** whenever the Hub is reachable. What is left is not a missing-data
 problem but a weighting problem: Wikipedia human prose is a small slice next to ~12,000
-HC3 rows, and it still lands at 26.7% human FPR.
+HC3 rows. The 26.7% in that snippet is from the 200-row probe and should not be quoted;
+the full runs have the in-domain figure in `eval_report.json` under
+`splits.val_in_domain.by_domain.encyclopedia`.
 
 This is the third time a sandbox measurement has not transferred to the real machine.
 The proxy is useful for "is this worth two hours", but it must be checked against one
@@ -511,3 +514,89 @@ the tests call it with real arrays. `by_domain` and `by_length` also report a sp
 `human_false_positive_rate` even when it holds only human rows (the `arxiv_ai` domain has
 no AI rows at all), which previously produced no FPR for exactly the split that was
 failing.
+
+### Measured: training budget is not the wiki problem
+
+One full epoch, no `--limit`, same corpus and flags (`--max-len 1024 --batch-size 4`):
+
+| run | `wiki_csai` human FPR | wiki recall | wiki AUC | `formal_academic` FPR | `mage_heldout` recall |
+|---|---|---|---|---|---|
+| `modernbert_mixed`, 2 epochs, 5,836 steps | 0.4405 | 0.980 | 0.885 | 0.0331 | 0.792 |
+| `modernbert_1ep`, 1 epoch | **0.4471** | 0.982 | 0.959 | 0.0412 | 0.807 |
+| `modernbert_probe`, 200 rows | 0.3069 | 0.908 | 0.908 | 0.1408 | 0.535 |
+
+The 200-row probe had suggested under-training was the cause (30.7% vs 44.0%). The
+full one-epoch run lands at 44.7%, so **that reading was a small-sample artefact and is
+withdrawn**. Halving the budget changes wiki FPR by 0.7 points. The number is a
+property of the data, not of how long the model trains. The probe is a plumbing check
+and nothing more, exactly as its own `note` field says.
+
+### Length is where the false positives live
+
+Human-only false-positive rate on `test_ood`, split by document length, in the
+TF-IDF+LR proxy trained on HC3 only:
+
+| words | all human | `wiki_csai` | `arxiv_ai` | `arxiv_cv` | `arxiv_lg` |
+|---|---|---|---|---|---|
+| <100 | 0.228 (n=1281) | 0.440 | 0.199 | 0.167 | 0.156 |
+| 100-200 | 0.483 (n=1236) | 0.709 | 0.408 | 0.455 | 0.428 |
+| 200-400 | 0.726 (n=442) | 0.859 | 0.612 | 0.310 | 0.538 |
+| 400+ | 0.946 (n=56) | 0.946 | - | - | - |
+
+The ramp is monotone in *every* source, so it is not a Wikipedia property. The trained
+model shows the same shape on in-domain data, where 400+ is still 0.6%: it gets by
+there because `val_stack` and `test` contain almost no long human documents (train
+human median is 40-138 words depending on domain). Above roughly 200 words the detector
+has essentially no human reference and calls the text AI.
+
+**Stitching** -- concatenating two to four disjoint same-domain, same-label documents
+to fill the 200-400 bucket, so no text is invented -- moved the proxy from 0.7077 to
+0.6944 wiki FPR and 0.3112 to 0.3267 on `arxiv_ai`. Length is a symptom. Balancing it
+does not teach the model what long human prose looks like; it repeats what it already
+has at greater length.
+
+### Wikipedia human prose is separable from everything else at AUC 0.996
+
+`ml/diagnose_wiki_fpr.py --detector ml/artifacts/<run>` measures three things:
+
+- **`domain_probe`**: 5-fold CV of TF-IDF+LR separating `wiki_csai` human rows from all
+  in-domain human rows. **AUC 0.9962, accuracy 0.9831.** The two populations share
+  almost nothing, so a domain signature is available to any model that wants it.
+  The features the probe leans on for wiki are `is the`, `such as`, `include`,
+  `science`, `artificial intelligence`; for the in-domain side they are `we`, `you`,
+  `this paper`, `our`. First-person voice is the discriminator, and it is not
+  authorship -- it is genre.
+- **`style`**: marker frequencies. `wiki_csai` human text averages 196 words and 10.2
+  sentences with `[12]`-style citations in 15.2% of rows; `open_qa` human text averages
+  47 words and 2.9 sentences with zero. The populations differ by an order of magnitude
+  in the statistic that drives the decision.
+- **`detector`**: re-scores `test_ood` with the checkpoint and sweeps temperature under
+  a fixed *in-domain* human FPR budget, so the operating point is set on an unbiased
+  human sample and the wiki number is reported at that point rather than tuned.
+
+**Why this matters for the recipe.** HC3's `wiki_csai` domain is simultaneously the
+source of the human half of the training pairs and the held-out test domain:
+`split_records` routes `wiki_csai` into `test_ood` unconditionally. So the model is
+scored on a population the recipe deliberately excludes. The population correction
+`p*(1-b)/(p*(1-b)+b)` gives the expected rate at the mixed population -- about 0.28 at
+a 0.2 trained share -- but it assumes both populations behave alike, and 0.9962 says
+they do not. **Do not quote the corrected figure as an expectation.** It is an upper
+bound on what mixing would buy.
+
+What follows from that is the question worth answering before more GPU: the detector is
+being asked to separate Wikipedia prose written by a person from Wikipedia prose written
+by ChatGPT. Every other source in the corpus is a different genre. A single binary
+head trained mostly on forum-style text will keep learning "formal and impersonal = AI"
+and will keep failing on any long formal human document, Wikipedia or not.
+
+### The `--limit` trap, one more time
+
+Three times now a `--limit` run has looked like a result:
+
+| claim from a limited run | what the full run showed |
+|---|---|
+| "`by_domain` now works" | true, and it was the point of that run |
+| "under-training explains wiki FPR, 30.7% vs 44.0%" | false; full 1 epoch gives 44.7% |
+| "`formal_academic` is 14.1%" | full 1 epoch gives 4.1% |
+
+The first was structural and survived. Both numeric claims did not.
