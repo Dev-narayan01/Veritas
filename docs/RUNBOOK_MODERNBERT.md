@@ -600,3 +600,56 @@ Three times now a `--limit` run has looked like a result:
 | "`formal_academic` is 14.1%" | full 1 epoch gives 4.1% |
 
 The first was structural and survived. Both numeric claims did not.
+
+## Serving the checkpoint
+
+`train_modernbert.py` is a training script. Until `ml/adopt_modernbert.py` existed
+nothing connected its output to the site, and three things would have gone wrong in
+silence:
+
+| | before | now |
+|---|---|---|
+| weights | API loads `<artifacts>/transformer`; the run writes `<artifacts>/<run>/` | `adopt_modernbert.py` copies them and writes `transformer_meta.json` |
+| window | `TRANSFORMER_MAX_LEN` default 256, checkpoint trained at 1024 | window travels in `manifest.json`; adopting warns when they disagree |
+| stackers | `standard` has no stacker, so the site stays on `lite`/`fast` | scoring `val_stack` with the adopted checkpoint fits it |
+
+### The full path from checkpoint to served mode
+
+```bash
+cd ~/Veritas && source .venv/bin/activate
+
+# 1. score every split with the checkpoint, using the serving estimator
+python ml/train_transformer.py --adopt ml/artifacts/modernbert_1ep
+
+# 2. fit the stackers that can now see a transformer column
+python ml/train_stackers.py --force
+
+# 3. calibrate and pick thresholds on val_cal
+python ml/tune_thresholds.py --force
+
+# 4. re-read the served numbers
+python ml/evaluate.py --force
+
+# 5. check that what is installed is what is being served
+python ml/adopt_modernbert.py --check
+
+# 6. serve it
+cd backend && TRANSFORMER_MAX_LEN=1024 ../.venv/bin/uvicorn app.main:app --port 8000
+```
+
+Step 1 is the slow one: roughly 14,000 documents at one forward pass each, because the
+serving estimator scores a document at a time (sliding window, stride 128, mean of
+per-window probabilities). Expect 20-40 minutes on a 3050. Steps 2-4 are minutes.
+
+`train_transformer.py --adopt` deliberately does **not** score the `train` split: no
+downstream step reads it, and it is 13,777 documents. Pass `--all-splits` if you want
+the column anyway.
+
+### One estimator difference, stated rather than hidden
+
+`eval_report.json` comes from a single forward pass truncated at `max_len`. Serving
+slides a window and averages the per-window probabilities. Below the window size the
+two agree exactly; above it they are different estimators. That is why
+`transformer_meta.json` records `estimator`, and why the numbers in `metrics.json`
+(after step 4) are the ones to quote -- they come from the sliding-window path the site
+actually runs.
