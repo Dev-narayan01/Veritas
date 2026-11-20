@@ -89,6 +89,46 @@ def test_a_missing_backend_raises_instead_of_scoring_zero() -> None:
         ppl.Gpt2Backend = original  # type: ignore[assignment]
 
 
+def test_tokens_follow_the_model_to_its_device() -> None:
+    """The model was placed on CUDA while the token ids stayed on the CPU.
+
+    That path had never run, so the failure surfaced as a torch RuntimeError
+    ("index is on cpu ... on cuda:0") on the first document of a 40-minute job.
+    Asserted structurally: the source must move the ids to the recorded device.
+    """
+    import inspect
+
+    from app.detector import perplexity
+
+    source = inspect.getsource(perplexity.Gpt2Backend.features)
+    assert ".to(self._device)" in source
+    # And the device must be remembered at load time, not guessed in features().
+    load_source = inspect.getsource(perplexity.Gpt2Backend.load)
+    assert "self._device" in load_source
+
+
+def test_loading_the_same_model_twice_reuses_the_weights() -> None:
+    """train_perplexity_model decides on a backend, then builds another: one cache."""
+
+    class _Preloaded:
+        _model = object()
+        _tokenizer = object()
+        _device = "cpu"
+
+    from app.detector import perplexity
+
+    original = dict(perplexity.Gpt2Backend._shared)
+    try:
+        perplexity.Gpt2Backend._shared["a-test-model"] = _Preloaded()
+        backend = perplexity.Gpt2Backend("a-test-model")
+        assert backend.load() is True
+        assert backend._model is _Preloaded._model
+        assert backend._device == "cpu"
+    finally:
+        perplexity.Gpt2Backend._shared.clear()
+        perplexity.Gpt2Backend._shared.update(original)
+
+
 def test_the_backend_is_not_pickled_with_the_artifact() -> None:
     """Weights are restored from cache on load; shipping them in a pkl would be wrong."""
     artifact = PerplexityArtifact(

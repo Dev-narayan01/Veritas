@@ -122,15 +122,30 @@ class Gpt2Backend:
 
     name = "gpt2"
 
+    # Process-wide cache of loaded backends, keyed by model name. Loading GPT-2 costs
+    # ~500 MB of disk reads; PerplexityArtifact created one per document before this.
+    _shared: dict[str, "Gpt2Backend"] = {}
+
     def __init__(self, model_name: str | None = None, max_tokens: int = 512) -> None:
         self.model_name = model_name or settings.ppl_model
         self.max_tokens = max_tokens
         self._model: Any = None
         self._tokenizer: Any = None
+        self._device: str = "cpu"
         self._error: str | None = None
         self._tried = False
 
     def load(self) -> bool:
+        """Load tokenizer + model once per process per model name."""
+
+        shared = Gpt2Backend._shared.get(self.model_name)
+        if shared is not None and shared._model is not None:
+            # Reuse: train_perplexity_model.py loads one to decide which backend to
+            # use and then builds another to compute features, which read 548 MB of
+            # weights from disk twice.
+            self._model, self._tokenizer = shared._model, shared._tokenizer
+            self._device, self._tried = shared._device, True
+            return True
         if self._tried:
             return self._model is not None
         self._tried = True
@@ -139,13 +154,20 @@ class Gpt2Backend:
             from transformers import AutoModelForCausalLM, AutoTokenizer
 
             self._tokenizer = AutoTokenizer.from_pretrained(self.model_name)
-            dtype = torch.float16 if torch.cuda.is_available() else torch.float32
+            # device is remembered rather than recomputed: the tensors have to follow the
+            # model, and the model was silently placed on CUDA while the token ids stayed
+            # on the CPU. That path had never run, so it raised on the first document
+            # ("index is on cpu, different from other tensors on cuda:0").
+            self._device = "cuda" if torch.cuda.is_available() else "cpu"
+            dtype = torch.float16 if self._device == "cuda" else torch.float32
             self._model = (
                 AutoModelForCausalLM.from_pretrained(self.model_name, torch_dtype=dtype)
                 .eval()
-                .to("cuda" if torch.cuda.is_available() else "cpu")
+                .to(self._device)
             )
-            log.info("ppl backend gpt2 loaded (%s, %s)", self.model_name, dtype)
+            log.info("ppl backend gpt2 loaded (%s, %s, %s)",
+                     self.model_name, dtype, self._device)
+            Gpt2Backend._shared[self.model_name] = self
         except Exception as exc:  # noqa: BLE001 - optional dependency
             self._error = f"GPT-2 unavailable: {exc}"
             log.warning(self._error)
@@ -160,7 +182,7 @@ class Gpt2Backend:
 
         assert self._tokenizer is not None and self._model is not None
         ids = self._tokenizer(text, return_tensors="pt", truncation=True,
-                              max_length=self.max_tokens).input_ids
+                              max_length=self.max_tokens).input_ids.to(self._device)
         with torch.no_grad():
             logits = self._model(ids).logits.float()
             logprobs = torch.log_softmax(logits, dim=-1)
