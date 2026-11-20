@@ -212,7 +212,10 @@ def _adopt(args, cfg: RunConfig) -> int:
     run = args.adopt if args.adopt.is_absolute() else (Path.cwd() / args.adopt)
     verified = verify(run)
     report = verified["report"]
+    # `max_len` is how long the checkpoint saw at training time. It is read here and
+    # written to transformer_meta.json; serving uses TRANSFORMER_MAX_LEN.
     max_len = args.max_len or report.get("max_len") or 1024
+    trained_max_len = report.get("max_len")
 
     sys.path.insert(0, str(REPO_ROOT / "backend"))
     from app.detector.transformer import TransformerDetector
@@ -250,6 +253,7 @@ def _adopt(args, cfg: RunConfig) -> int:
                 "rows": report.get("train_rows"),
                 "epochs": report.get("epochs"),
                 "max_len": max_len,
+                "trained_max_len": trained_max_len,
                 "run": cfg.label,
                 "source_run": str(args.adopt),
                 "scored_splits": splits,

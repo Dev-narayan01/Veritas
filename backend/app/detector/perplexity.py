@@ -228,6 +228,23 @@ class PerplexityArtifact:
     lm: NgramLM | None = None
     style_reference: dict[str, dict[str, float]] = field(default_factory=dict)
     model_name: str = ""
+    # Cached Gpt2Backend. Loading GPT-2 costs 500 MB of download and a few seconds of
+    # GPU transfer, and this used to be constructed fresh inside features() -- i.e. once
+    # per document. It is excluded from pickling (see __getstate__) because the weights
+    # are restored from the Hub/cache on first use, not shipped in the artifact.
+    _gpt2: Any = field(default=None, repr=False, compare=False)
+
+    def _gpt2_backend(self) -> "Gpt2Backend":
+        """The one loaded GPT-2 for this artifact, created on first use."""
+        if self._gpt2 is None:
+            backend = Gpt2Backend(self.model_name)
+            if not backend.load():
+                # Raised, not defaulted: writing 0.0 for the LM features would look
+                # like a score instead of a failure and would poison any classifier
+                # fitted on it.
+                raise RuntimeError(backend.error or "GPT-2 unavailable")
+            self._gpt2 = backend
+        return self._gpt2
 
     def features(self, text: str) -> dict[str, float]:
         style: StyleFeatures = compute_style(text)
@@ -237,11 +254,17 @@ class PerplexityArtifact:
                 raise RuntimeError("ngram language model missing from artifact")
             feats.update(ngram_features(text, self.lm))
         else:  # pragma: no cover - needs torch
-            backend = Gpt2Backend(self.model_name)
-            if not backend.load():
-                raise RuntimeError(backend.error or "GPT-2 unavailable")
-            feats.update(backend.features(text))
+            feats.update(self._gpt2_backend().features(text))
         return feats
+
+    def __getstate__(self) -> dict[str, Any]:
+        state = dict(self.__dict__)
+        state["_gpt2"] = None
+        return state
+
+    def __setstate__(self, state: dict[str, Any]) -> None:
+        self.__dict__.update(state)
+        self._gpt2 = None
 
     def matrix(self, texts: list[str]) -> np.ndarray:
         rows = []

@@ -21,19 +21,33 @@ sys.path.insert(0, str(ARTIFACT_DIR.parents[1] / "backend"))
 from app.config import MODE_COMPONENTS, MODES  # noqa: E402
 from app.detector.stacker import feature_row, fit_stacker, save  # noqa: E402
 
+# The base components this script expects to find in the feature store.
+SCORED_COMPONENTS = ("classical", "ppl_gpt2", "transformer")
+
+
+def _mode_components(mode: str) -> tuple[tuple[str, ...], list[str]]:
+    """The scored components this mode needs, and the ones that are not scored here.
+
+    ``binoculars`` and ``fastdetect`` are zero-shot scorers with their own feature store
+    and their own availability check; they are not part of ``probs``. Treating them as
+    if they were meant ``needed`` came out empty for ``deep``, which then silently
+    looked like "all components present" and fitted a stacker without them.
+    """
+    scored = tuple(c for c in MODE_COMPONENTS[mode] if c in SCORED_COMPONENTS)
+    zero_shot = [c for c in MODE_COMPONENTS[mode] if c not in SCORED_COMPONENTS]
+    return scored, zero_shot
+
 
 def _rows_for_mode(frame: pd.DataFrame, mode: str) -> tuple[list[dict], list[int]]:
     rows: list[dict] = []
     labels: list[int] = []
+    needed_components, _ = _mode_components(mode)
     for record in frame.to_dict("records"):
         probs = {
             "classical": record.get("p_classical"),
             "ppl_gpt2": record.get("p_ppl_gpt2"),
             "transformer": record.get("p_transformer"),
         }
-        needed = [c for c in MODE_COMPONENTS[mode] if c in probs]
-        if any(probs[c] is None or pd.isna(probs[c]) for c in needed):
-            return [], []
         zero_shot = {
             "binoculars": record.get("z_binoculars") or 0.0,
             "fastdetect": record.get("z_fastdetect") or 0.0,
@@ -43,9 +57,26 @@ def _rows_for_mode(frame: pd.DataFrame, mode: str) -> tuple[list[dict], list[int
             for c in MODE_COMPONENTS[mode]
         ):
             return [], []
+        if any(probs[c] is None or pd.isna(probs[c]) for c in needed_components):
+            return [], []
         rows.append(feature_row(probs, zero_shot, int(record.get("words", 100)), mode))
         labels.append(int(record["label"]))
     return rows, labels
+
+
+def _missing_columns(frame: pd.DataFrame, mode: str) -> list[str]:
+    """Which of the mode's components produced no column at all.
+
+    A bare "0 usable rows" sends the reader to the data; the actual cause is usually
+    that one component never scored this split, which is a different command to run.
+    """
+    needed, _ = _mode_components(mode)
+    missing = []
+    for component in needed:
+        column = f"p_{component}"
+        if column not in frame.columns or frame[column].isna().all():
+            missing.append(component)
+    return missing
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -65,11 +96,16 @@ def main(argv: list[str] | None = None) -> int:
         for mode in MODES:
             rows, labels = _rows_for_mode(stack_frame, mode)
             if len(rows) < 40 or len(set(labels)) < 2:
+                missing = _missing_columns(stack_frame, mode)
                 fitted[mode] = {
                     "fitted": False,
                     "reason": f"only {len(rows)} usable rows for mode {mode}",
+                    "missing": missing,
                 }
-                log.warning("mode %s not fitted: %s", mode, fitted[mode]["reason"])
+                log.warning(
+                    "mode %s not fitted: %s%s", mode, fitted[mode]["reason"],
+                    f" (no scores for: {', '.join(missing)})" if missing else "",
+                )
                 continue
             artifact = fit_stacker(mode, rows, labels)
             save(artifact, ARTIFACT_DIR / f"stacker_{mode}.pkl")

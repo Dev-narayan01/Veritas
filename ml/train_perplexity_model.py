@@ -73,13 +73,24 @@ def main(argv: list[str] | None = None) -> int:
             lm = NgramLM.train(train_frame["text"].tolist(), order=3)
             log.info("trigram LM: %s contexts, vocab %s", len(lm.counts), lm.vocab_size)
 
+        # One backend for the whole run. The previous version constructed Gpt2Backend()
+        # inside features(), so load() was never called and every document hit
+        # `assert self._tokenizer is not None` -- the run died on the first text after
+        # 146 seconds of downloading weights.
+        gpt2 = None
+        if backend == "gpt2":  # pragma: no cover - GPU path
+            gpt2 = Gpt2Backend()
+            if not gpt2.load():
+                raise SystemExit(f"GPT-2 backend reported available but failed to load: {gpt2.error}")
+
         def features(text: str) -> dict[str, float]:
             row = compute_style(text).as_dict()
             if backend == "ngram_lm":
                 assert lm is not None
                 row.update(ngram_features(text, lm))
             else:  # pragma: no cover - Kaggle path
-                row.update(Gpt2Backend().features(text))
+                assert gpt2 is not None
+                row.update(gpt2.features(text))
             return row
 
         train_rows = [features(t) for t in train_frame["text"].tolist()]

@@ -42,7 +42,6 @@ from __future__ import annotations
 import argparse
 import json
 import shutil
-import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -82,12 +81,21 @@ def _fpr(report: dict, split: str, domain: str) -> float | None:
     return (entry.get(domain) or {}).get("human_false_positive_rate")
 
 
-def served_max_len() -> int:
-    """The window the API will use, read through the API's own settings object."""
-    sys.path.insert(0, str(ROOT / "backend"))
-    from app.config import settings
+def served_max_len(artifacts: Path | None = None) -> tuple[int, str]:
+    """The window the API will use, and where the number came from.
 
-    return int(settings.transformer_max_len)
+    Read from the bundle first because that is what the registry does: the window
+    travels with the weights so a checkpoint cannot be served through a window it was
+    not trained for. Falls back to TRANSFORMER_MAX_LEN, which is what a bundle without
+    the field gets.
+    """
+    import os
+
+    if artifacts is not None:
+        manifest = _read_json(artifacts / "manifest.json", {}) or {}
+        if manifest.get("transformer_max_len"):
+            return int(manifest["transformer_max_len"]), "manifest.json"
+    return int(os.environ.get("TRANSFORMER_MAX_LEN", 256)), "TRANSFORMER_MAX_LEN"
 
 
 def verify(run: Path) -> dict:
@@ -251,7 +259,14 @@ def check(artifacts: Path) -> int:
         print(f"  source run: {meta.get('source_run')}  rows={meta.get('rows')} "
               f"epochs={meta.get('epochs')}")
         print(f"  trained at {meta.get('trained_max_len')}, served at {meta.get('max_len')}")
-    print(f"served window: TRANSFORMER_MAX_LEN={served_max_len()}")
+    window, source = served_max_len(artifacts)
+    trained = meta.get("trained_max_len")
+    print(f"served window: {window} (from {source})")
+    if trained and int(trained) != int(window):
+        print(
+            f"! WARNING: trained at {trained} tokens, served at {window}. Documents are "
+            f"truncated to roughly {int(window * 0.75)} words before scoring."
+        )
     notes = staleness(artifacts)
     if notes:
         print("\nnot in sync:")
@@ -263,6 +278,12 @@ def check(artifacts: Path) -> int:
         print("  python ml/evaluate.py --force")
     else:
         print("\nstackers and thresholds are present for every fitted mode.")
+    window, _ = served_max_len(artifacts)
+    print(
+        "\nserve it with the window the bundle records:\n"
+        f"  cd backend && TRANSFORMER_MAX_LEN={window} ../.venv/bin/uvicorn "
+        "app.main:app --port 8000"
+    )
     return 0
 
 
